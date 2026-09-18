@@ -1,0 +1,37 @@
+{
+  "name": "@bumblebee/relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hand work between AI coding agents without losing context. A durable, harness-agnostic handoff protocol.",
+  "type": "module",
+  "bin": {
+    "relay": "./bin/relay.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "docs",
+    "SKILL.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "handoff",
+    "context",
+    "claude-code",
+    "cursor",
+    "codex",
+    "skill"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/whitebumblee/skills.git",
+    "directory": "skills/engineering/relay"
+  },
+  "license": "MIT"
+}

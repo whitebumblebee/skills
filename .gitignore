@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.DS_Store
+
+# Local working notes. Kept out of the public repo because it references
+# unrelated private projects. Remove this line if you decide to publish it.
+claude_session.md
+transcript.jsonl
