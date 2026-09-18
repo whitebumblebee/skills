@@ -52,7 +52,7 @@ directly if you installed relay some other way.
 For all your projects at once, install globally:
 
 ```bash
-npx skills@latest add whitebumblee/skills@relay --global
+npx skills@latest add whitebumblebee/skills@relay --global
 ```
 
 ## Cursor — verified

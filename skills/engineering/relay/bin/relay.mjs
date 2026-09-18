@@ -311,7 +311,7 @@ INTEGRITY
 
   version, help
 
-Docs: https://github.com/whitebumblee/skills/tree/main/skills/engineering/relay
+Docs: https://github.com/whitebumblebee/skills/tree/main/skills/engineering/relay
 `;
 
 const COMMANDS = {

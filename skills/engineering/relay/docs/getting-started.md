@@ -7,7 +7,7 @@ skill, not an npm package — the CLI ships inside the skill directory.
 
 ```bash
 cd your-project
-npx skills@latest add whitebumblee/skills@relay
+npx skills@latest add whitebumblebee/skills@relay
 ```
 
 This copies the skill to `.agents/skills/relay/` and symlinks it into every
@@ -157,7 +157,7 @@ which is the right tradeoff for a system where agents die unpredictably.
 ## Adding relay to CI
 
 ```yaml
-- run: npx skills@latest add whitebumblee/skills@relay
+- run: npx skills@latest add whitebumblebee/skills@relay
 - run: node .agents/skills/relay/bin/relay.mjs doctor --strict
 ```
 

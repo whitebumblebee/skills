@@ -13,7 +13,7 @@ relay is a small protocol plus a CLI that fixes this. It gives every project a
 know exactly where things stand — and a discipline for leaving it that way.
 
 ```bash
-npx skills@latest add whitebumblee/skills@relay
+npx skills@latest add whitebumblebee/skills@relay
 node .agents/skills/relay/bin/relay.mjs init --all
 ```
 
@@ -73,7 +73,7 @@ and no registry involved.
 
 ```bash
 cd your-project
-npx skills@latest add whitebumblee/skills@relay
+npx skills@latest add whitebumblebee/skills@relay
 ```
 
 That lands the skill at `.agents/skills/relay/`, symlinked into `.claude/skills/`,
@@ -212,4 +212,4 @@ even with no network access.
 
 ## License
 
-MIT. This skill lives in [whitebumblee/skills](https://github.com/whitebumblee/skills).
+MIT. This skill lives in [whitebumblebee/skills](https://github.com/whitebumblebee/skills).

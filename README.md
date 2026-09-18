@@ -1,16 +1,18 @@
 # skills
 
+[![skills.sh](https://skills.sh/b/whitebumblebee/skills)](https://skills.sh/whitebumblebee/skills)
+
 Agent skills for coding harnesses — Claude Code, Cursor, Codex, Warp, Kiro,
 Cline, opencode and anything else that reads `AGENTS.md`.
 
 ```bash
-npx skills@latest add whitebumblee/skills
+npx skills@latest add whitebumblebee/skills
 ```
 
 That installs every skill in this repo. To install just one:
 
 ```bash
-npx skills@latest add whitebumblee/skills@relay
+npx skills@latest add whitebumblebee/skills@relay
 ```
 
 Add `--global` to install into `~/.agents/skills/` so the skills are available
