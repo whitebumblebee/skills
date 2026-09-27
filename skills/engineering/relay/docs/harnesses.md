@@ -18,6 +18,13 @@ relay harness zed cline              # add more later
 Pointer files are safe to commit. They contain no secrets and no project
 detail — just where to look.
 
+Some of these files are shared: `AGENTS.md`, `CLAUDE.md`, `WARP.md`,
+`GEMINI.md`, `CONVENTIONS.md` and `.rules` are read by several tools and often
+already hold your own instructions. relay never overwrites them. It appends the
+pointer between `<!-- relay:start -->` and `<!-- relay:end -->`, and re-running
+`init` or `harness` replaces only that block. Files with `relay` in the name —
+`.cursor/rules/relay.mdc`, `.kiro/steering/relay.md` — are relay's own.
+
 ---
 
 ## Support levels

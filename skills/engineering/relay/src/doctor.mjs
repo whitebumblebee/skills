@@ -15,7 +15,7 @@ import {
   readHistory,
   readHistoryOrphans,
 } from "./core.mjs";
-import { indexIsCurrent } from "./history.mjs";
+import { commitDrift, indexIsCurrent } from "./history.mjs";
 import { isExpired, readTasks } from "./tasks.mjs";
 import { REQUIRED_FIELDS } from "./history.mjs";
 
@@ -119,6 +119,15 @@ export function runDoctor(root, { strict = false } = {}) {
     }
     for (const field of ["summary", "next"]) {
       if (typeof e.data[field] === "string" && e.data[field].startsWith("TODO:")) {
+        if (e.data.bootstrap) {
+          add(
+            "error",
+            "bootstrap-incomplete",
+            `history/${e.file} — relay was adopted but setup was never finished (\`${field}\` is a placeholder).`,
+            "An agent must complete adoption: see docs/setup.md in the relay skill.",
+          );
+          break;
+        }
         add(
           "error",
           "placeholder-left",
@@ -190,7 +199,18 @@ export function runDoctor(root, { strict = false } = {}) {
     }
   }
 
-  /* 10 — secrets, because history files get published */
+  /* 10 — work that landed in git with no handoff log explaining it */
+  const drift = commitDrift(root);
+  if (drift.count && drift.count >= config.unloggedCommitsWarn) {
+    add(
+      "warn",
+      "unlogged-commits",
+      `${drift.count} commits since ${drift.since} with no handoff log.`,
+      "Someone worked without logging. Write a log that explains what those commits did and what comes next.",
+    );
+  }
+
+  /* 11 — secrets, because history files get published */
   if (fs.existsSync(p.dir)) {
     for (const file of walk(p.dir)) {
       const text = read(file);

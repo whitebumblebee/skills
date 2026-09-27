@@ -68,7 +68,11 @@ updating its `seq:` front-matter, then running `relay index`.
 relay init --harness claude-code,cursor,warp,kiro,codex
 ```
 
-Do this **before** `--apply`; migration writes into `.relay/history/`.
+Do this **before** `--apply`; migration writes into `.relay/history/`. `init`
+notices the legacy files and deliberately writes **no** bootstrap entry — your
+migrated logs are the history, and a summary on top would only compete with
+them. Your existing `AGENTS.md` and `CLAUDE.md` get a marked relay section
+appended; nothing you wrote is changed.
 
 ### 4. Apply
 
@@ -104,7 +108,8 @@ properly (so they carry an expiry) or set them back to `TODO`.
 ### 6. Port the invariants
 
 Copy the durable parts of your old `AGENTS.md` / `instructions_agents.md` into
-`.relay/PROJECT.md`, and split them as you go:
+`.relay/PROJECT.md` — or ask an agent to, following the interview in
+[setup.md](setup.md) — and split them as you go:
 
 - **Generic protocol** — claiming, logging, handoff discipline — is already in
   relay. Delete your copy.
@@ -130,8 +135,9 @@ Once `doctor` is clean and you have read a few migrated logs:
 rm history_*.md history.md todo.md instructions_agents.md
 ```
 
-Delete the per-harness rule copies too — `relay init` replaced them with
-pointers.
+Delete the per-harness rule copies too — `relay init` wrote pointers alongside
+them. In shared files like `AGENTS.md`, keep the `<!-- relay:start -->` block
+and remove only the old protocol text around it.
 
 ---
 

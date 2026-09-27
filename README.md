@@ -25,7 +25,7 @@ the situation in the `description` matches, without you asking.
 
 | Skill | What it does |
 | --- | --- |
-| [**relay**](skills/engineering/relay) | Hand work between AI agents without losing context. Sequenced handoff logs, claimed tasks, a generated history index, and a `doctor` command that verifies the whole surface. Ships a zero-dependency Node CLI alongside the protocol. |
+| [**relay**](skills/engineering/relay) | Hand work between AI agents without losing context. Sequenced handoff logs, claimed tasks, a generated history index, and a `doctor` command that verifies the whole surface. Adopts into existing projects — with or without git history — through an agent-led setup interview. Ships a zero-dependency Node CLI alongside the protocol. |
 
 ## How installation works
 

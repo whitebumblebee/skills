@@ -13,10 +13,14 @@ export const HISTORY_DIR = "history";
 export const SEQ_PAD = 4;
 
 export const DEFAULT_CONFIG = {
-  // How long a claim stays valid before `relay doctor` calls it stale. Agents
-  // die mid-task all the time — a credit limit, a closed laptop, a crash — and
-  // an immortal claim blocks every later agent forever.
-  claimTtlHours: 4,
+  // How long a claim stays valid without renewal. Agents renew by re-running
+  // `relay claim` (and `relay log` renews too), so this is the window between
+  // an agent dying — a credit limit, a closed laptop, a crash — and everyone
+  // else being allowed to assume so.
+  claimTtlHours: 1,
+  // `relay doctor` warns once this many commits of real work have landed
+  // since the last commit that included a history log.
+  unloggedCommitsWarn: 5,
   // Commands another agent should run before marking work done. Project-specific;
   // `relay doctor` only checks that they are declared, never runs them.
   gates: [],

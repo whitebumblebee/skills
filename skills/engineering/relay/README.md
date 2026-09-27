@@ -54,8 +54,15 @@ across every agent and every tool. `ls` alone tells you the order.
 of the log files by `relay index`. Hand-editing it is pointless, and drift
 becomes impossible rather than merely discouraged.
 
-**Claims expire.** `relay claim` stamps a TTL. `relay doctor` reports claims
-that outlived the agent holding them, and `--force` documents the takeover.
+**Claims expire.** `relay claim` stamps a short TTL that the working agent
+keeps renewing. A claim that stops being renewed means its agent is gone;
+`relay doctor` reports it, and `--force` documents the takeover. Asking an agent
+to continue another's task counts as reassigning it.
+
+**Works on projects that already exist.** `relay init` recognises an empty
+project, one with git history, and one with code but no git — and in the last
+two writes a bootstrap history entry so agents do not start from nothing. Your
+agent then interviews you to fill in the rest.
 
 **One tracker.** `.relay/tasks.md` is authoritative. Plans are subordinate to
 it, and `doctor` warns when a competing tracker appears at the project root.
@@ -77,7 +84,8 @@ npx skills@latest add whitebumblebee/skills@relay
 ```
 
 That lands the skill at `.agents/skills/relay/`, symlinked into `.claude/skills/`,
-`.cursor/skills/` and every other agent directory in your project. Then:
+`.cursor/skills/` and every other agent directory in your project. Then tell
+your agent **"set up relay for this project"**, or run it yourself:
 
 ```bash
 node .agents/skills/relay/bin/relay.mjs init --harness claude-code,cursor,codex
@@ -96,17 +104,20 @@ Agents do not need the alias — `SKILL.md` tells them the full path.
 
 ```
 .relay/
-  PROJECT.md      invariants, gates, what needs a human   (yours to fill in)
-  tasks.md        the authoritative tracker
+  PROJECT.md      invariants, gates, what needs a human, what was deferred
+  tasks.md        the authoritative tracker, in priority order
   history.md      generated index — never edit by hand
   history/        0001_agent_task.md, 0002_...
-  config.json     claim TTL, gates, tracker aliases
-CLAUDE.md         ┐
-AGENTS.md         ├ short pointer files — one per harness
+  config.json     claim TTL, drift threshold, gates, tracker aliases
+CLAUDE.md         ┐ short pointers — one per harness; appended as a marked
+AGENTS.md         ├ block if you already have these files
 .cursor/rules/    ┘
 ```
 
-Fill in `PROJECT.md` and put real work in `tasks.md`. Then any agent, in any
+Then your agent runs the setup interview in [docs/setup.md](docs/setup.md). It
+reads whatever already exists, asks you what it cannot work out, suggests things
+like CI and deployment and asks how you want them prioritised, and writes
+`PROJECT.md` and `tasks.md` from your answers. After that, any agent, in any
 tool, runs:
 
 ```bash
@@ -118,7 +129,8 @@ relay status
 ```bash
 relay status                                   # what is going on, what is next
 relay claim api-pagination --agent claude      # take exactly one task
-# ... do the work, run the project's gates ...
+# ... do the work, re-running the claim between steps to renew it,
+#     and run the project's gates ...
 relay log --agent claude --task api-pagination # create the next sequenced log
 # ... fill in summary, outcomes, risks, and `next:` ...
 relay done api-pagination                      # cites the log automatically
@@ -195,6 +207,8 @@ only you can confirm it. Nothing is deleted. Full guide:
 | | |
 | --- | --- |
 | [Getting started](docs/getting-started.md) | Install, first project, the daily loop |
+| [How it works](docs/relay_flow.md) | Every scenario end to end: setup, picking up work, every kind of handoff |
+| [Setup](docs/setup.md) | The agent's setup interview for new and existing projects |
 | [Harnesses](docs/harnesses.md) | Setup for every supported tool |
 | [CLI reference](docs/cli.md) | Every command, every flag |
 | [File formats](docs/file-formats.md) | Front-matter schema, task states, naming |

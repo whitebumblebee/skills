@@ -40,6 +40,9 @@ network access at all, which several coding agents run in.
 
 ## Set up a project
 
+The easiest way: tell your agent **"set up relay for this project."** The skill
+takes it from there. You can also start it yourself:
+
 ```bash
 relay init --harness claude-code,cursor,codex
 ```
@@ -47,10 +50,30 @@ relay init --harness claude-code,cursor,codex
 Pick the tools you actually use, or `--all`. You can add more later with
 `relay harness <id>`.
 
-### Fill in `PROJECT.md`
+`init` works out which of three situations you are in:
 
-This is the highest-leverage thing you will do. It is read by every agent, in
-every tool, at the start of every session.
+| Your project | What happens |
+| --- | --- |
+| **Empty** — nothing built yet | Your agent interviews you: what you are building, for whom, the MVP, the stack. It suggests things like CI and deployment, asks where each belongs in the order, and turns your answers into `PROJECT.md` and a prioritised `tasks.md`. |
+| **Existing, with git history** | relay writes a bootstrap history entry from the git log. Your agent reads it, the code and the docs, tells you what it understood, asks about what the history cannot say — and what you want to build next. |
+| **Existing, without git** | Your agent reads and understands the code first, forms its own view, then asks only what stayed unclear, plus what enhancements you want. It writes the same bootstrap entry from what it found. |
+
+Whatever the agent suggests — CI/CD, staging, payments, monitoring — it asks
+whether you want it **now, next, later, or not at all**, and orders
+`tasks.md` by your answers. "Later" and "not at all" are recorded in
+`PROJECT.md` with your reason, so no agent suggests them again.
+
+If you already have an `AGENTS.md` or `CLAUDE.md`, relay adds a clearly marked
+section to it and leaves your content alone.
+
+In existing projects, setup is not finished until the agent completes the
+bootstrap entry with you — `relay status` says so, and `relay doctor` fails
+until then. The agent's procedure is in [setup.md](setup.md).
+
+### What goes in `PROJECT.md`
+
+Whether you or an agent writes it, this is the highest-leverage file in relay.
+It is read by every agent, in every tool, at the start of every session.
 
 Put in it what you would otherwise have to say twice:
 
@@ -63,10 +86,13 @@ Put in it what you would otherwise have to say twice:
 - **What needs a human.** Committing, pushing, deploying, spending money,
   console-only work. Be explicit; agents will otherwise either do it or ask
   about it every time.
+- **Deferred and declined.** What you chose to do later or not at all, and why.
 
 Keep it short enough that it actually gets read. A page is plenty.
 
-### Put real work in `tasks.md`
+### What goes in `tasks.md`
+
+Agents pick the first `TODO` from the top, so **order is priority**.
 
 ```markdown
 ## Now
@@ -106,8 +132,9 @@ That prints where things stand and names the next unblocked task. Then:
 relay claim api-pagination --agent claude
 ```
 
-Do the work. Run the gates from `PROJECT.md`. Then, **before you run low on
-context or credits** — not after:
+Claims last an hour; the agent re-runs the same `claim` between major steps to
+renew it. Do the work. Run the gates from `PROJECT.md`. Then, **before you run
+low on context or credits** — not after:
 
 ```bash
 relay log --agent claude --task api-pagination
@@ -147,6 +174,35 @@ relay claim api-pagination --agent cursor
 The new agent reads the log, sees exactly where the previous one stopped and
 what comes next, and continues. No archaeology.
 
+### When the old tool died without a handoff
+
+Credits often run out mid-sentence, with no chance to log. The task is still
+claimed, and the claim has not expired yet. Tell the new agent to **continue
+that task** — asking it to is the reassignment, so it takes the claim over
+with `--force` without asking you again:
+
+```bash
+relay claim api-pagination --agent cursor --force
+```
+
+relay lists where the old agent's half-done work probably is — uncommitted
+changes with git, files modified since its claim without git. The new agent
+inspects them, decides what to keep, and records the takeover in its log.
+
+If you have not said anything, an agent that finds a live claim will not take
+it on its own. It shows you the evidence — when the holder was last active,
+any logs, its likely leftover work — and asks.
+
+## Work discovered along the way
+
+When an agent notices something outside its task — a bug, a refactor, a
+feature it would suggest — it does not do it on the spot. It asks you **now,
+next, later, or not needed**, and adds a task at that position in `tasks.md`.
+"Later" and "not needed" are recorded in `PROJECT.md` so it is never suggested
+again. If it cannot ask, it adds the task at the bottom marked
+`priority not confirmed` and mentions it in its log. The same happens when
+every task is done and the agent proposes what comes next.
+
 ## Working in parallel
 
 Two agents can work at once if each holds a distinct task and their file scopes
@@ -164,11 +220,15 @@ which is the right tradeoff for a system where agents die unpredictably.
 If `.agents/skills/relay/` is committed to the repo, the first step is
 unnecessary — run the second on its own.
 
-This catches a stale index, unfilled placeholders, expired claims and
-credential-shaped strings before they reach anyone else.
+This catches a stale index, unfilled placeholders, expired claims, unfinished
+setup, work committed without a log, and credential-shaped strings before they
+reach anyone else. `unlogged-commits` needs the full history, so check out with
+`fetch-depth: 0`.
 
 ## Next
 
+- [How it works](relay_flow.md) — every scenario and handoff case, end to end
+- [Setup](setup.md) — the agent's setup interview, for all three modes
 - [CLI reference](cli.md) — every command and flag
 - [File formats](file-formats.md) — front-matter schema and task states
 - [Harnesses](harnesses.md) — per-tool setup

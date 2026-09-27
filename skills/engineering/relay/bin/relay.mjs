@@ -17,9 +17,20 @@ import {
   readHistory,
   requireRoot,
 } from "../src/core.mjs";
-import { runInit } from "../src/init.mjs";
-import { createLog, writeIndex } from "../src/history.mjs";
-import { claim, findTask, isExpired, nextUnblocked, readTasks, updateTask } from "../src/tasks.mjs";
+import { runInit, setupGuidePath } from "../src/init.mjs";
+import { MODE_LABELS } from "../src/adopt.mjs";
+import { bootstrapPending, commitDrift, createLog, writeIndex } from "../src/history.mjs";
+import {
+  claim,
+  describeFiles,
+  isExpired,
+  lastSeen,
+  leftoverWork,
+  nextUnblocked,
+  readTasks,
+  renewIfHeld,
+  updateTask,
+} from "../src/tasks.mjs";
 import { runDoctor } from "../src/doctor.mjs";
 import { applyMigration, planMigration } from "../src/migrate.mjs";
 import { ALL_HARNESSES, HARNESSES } from "../src/harnesses.mjs";
@@ -51,16 +62,36 @@ const list = (v) =>
 function cmdInit({ flags }) {
   const root = process.cwd();
   const harnesses = flags.all ? ALL_HARNESSES.filter((h) => h !== "generic") : list(flags.harness);
-  const res = runInit(root, { harnesses, force: Boolean(flags.force), name: flags.name });
-  console.log(`${C.green}relay initialised${C.off} in ${path.relative(process.cwd(), paths(root).dir) || ".relay"}\n`);
+  const mode = typeof flags.mode === "string" ? flags.mode : undefined;
+  const res = runInit(root, { harnesses, force: Boolean(flags.force), name: flags.name, mode });
+  const rel = path.relative(root, setupGuidePath());
+  const guide = rel.startsWith("..") ? setupGuidePath() : rel;
+
+  console.log(`${C.green}relay initialised${C.off} — ${C.bold}${MODE_LABELS[res.mode]}${C.off}\n`);
   if (res.created.length) console.log(`Created:\n${res.created.map((f) => `  + ${f}`).join("\n")}`);
+  if (res.updated.length)
+    console.log(`\nAdded a relay section to (your own content is untouched):\n${res.updated.map((f) => `  ~ ${f}`).join("\n")}`);
   if (res.skipped.length)
     console.log(`\n${C.dim}Left alone (use --force to overwrite):${C.off}\n${res.skipped.map((f) => `  · ${f}`).join("\n")}`);
   console.log(`\nHarnesses wired: ${res.harnesses.map((h) => HARNESSES[h].label).join(", ")}`);
-  console.log(`\n${C.bold}Next:${C.off}`);
-  console.log(`  1. Fill in .relay/PROJECT.md — invariants, gates, what needs a human`);
-  console.log(`  2. Put real work in .relay/tasks.md`);
-  console.log(`  3. relay status`);
+
+  console.log(`\n${C.bold}Next${C.off}`);
+  if (res.legacy) {
+    const where = res.legacy === "." ? "at the project root" : `in ${res.legacy}/`;
+    console.log(`  Legacy history_<agent>_<NN>.md files found ${where}. No bootstrap entry was written —`);
+    console.log(`  migrate them first, then finish setup:`);
+    console.log(`    relay migrate --from ${res.legacy}          ${C.dim}# dry run; read it, then --apply${C.off}`);
+  } else if (res.bootstrap) {
+    console.log(`  Setup is not finished until an agent completes it with you.`);
+    console.log(`  Tell your agent: "finish setting up relay". It will read the ${res.mode === "git" ? "git history and code" : "code"},`);
+    console.log(`  ask you what it cannot work out, fill in PROJECT.md and tasks.md, and complete`);
+    console.log(`  ${res.bootstrap}. \`relay doctor\` fails until then.`);
+  } else if (res.mode === "new") {
+    console.log(`  Tell your agent: "set up relay for this project". It will ask you about the`);
+    console.log(`  product, suggest things like CI and deployment, ask how you want them`);
+    console.log(`  prioritised, and fill in PROJECT.md and tasks.md from your answers.`);
+  }
+  console.log(`  ${C.dim}Agent instructions: ${guide}${C.off}`);
 }
 
 function cmdStatus() {
@@ -76,7 +107,25 @@ function cmdStatus() {
     `Tasks: ${counts.TODO || 0} todo · ${counts.IN_PROGRESS || 0} in progress · ` +
       `${counts.BLOCKED || 0} blocked · ${counts.DONE || 0} done`,
   );
-  console.log(`History: ${entries.length} entries\n`);
+  console.log(`History: ${entries.length} entries`);
+  const drift = commitDrift(root);
+  if (!drift.git) {
+    console.log(`${C.dim}No git repository — commit tracking is off.${C.off}`);
+  } else if (drift.count) {
+    const warn = drift.count >= readConfig(root).unloggedCommitsWarn;
+    console.log(
+      `${warn ? C.yellow : ""}Commits since ${drift.since}: ${drift.count}${warn ? C.off : ""}` +
+        ` ${C.dim}— work that no handoff log explains${C.off}`,
+    );
+  }
+  console.log("");
+
+  const setup = bootstrapPending(entries);
+  if (setup) {
+    console.log(`${C.yellow}${C.bold}Setup is not finished${C.off}`);
+    console.log(`  ${setup.file} still has placeholder fields. Complete adoption before other work —`);
+    console.log(`  ${C.dim}see docs/setup.md in the relay skill.${C.off}\n`);
+  }
 
   const active = tasks.filter((t) => t.state === "IN_PROGRESS");
   if (active.length) {
@@ -84,7 +133,7 @@ function cmdStatus() {
     for (const t of active) {
       const stale = isExpired(t);
       console.log(
-        `  ${stale ? `${C.red}✗${C.off}` : `${C.green}●${C.off}`} \`${t.slug}\` — ${t.agent} — ${t.claimedAt}` +
+        `  ${stale ? `${C.red}✗${C.off}` : `${C.green}●${C.off}`} \`${t.slug}\` — ${t.agent} — last active ${lastSeen(t)}` +
           (t.expiresAt ? ` ${C.dim}(expires ${t.expiresAt}${stale ? " — EXPIRED" : ""})${C.off}` : ""),
       );
     }
@@ -124,23 +173,24 @@ function cmdClaim({ positional, flags }) {
   if (!agent) throw new UserError("--agent is required (e.g. --agent claude).");
   const ttl = Number(flags.ttl || readConfig(root).claimTtlHours);
 
-  if (flags.force) {
-    const prev = findTask(root, slug);
-    if (prev.state === "IN_PROGRESS") {
-      console.log(`${C.yellow}Taking over${C.off} \`${slug}\` from ${prev.agent} (claimed ${prev.claimedAt}).`);
-      console.log(`${C.dim}Record the takeover in your history log.${C.off}`);
-    }
-    updateTask(root, slug, (t) => {
-      t.state = "TODO";
-      t.agent = null;
-      t.claimedAt = null;
-      t.expiresAt = null;
-    });
+  const t = claim(root, slug, agent, ttl, { force: Boolean(flags.force) });
+  if (t.renewed) {
+    console.log(`${C.green}Renewed${C.off} \`${t.slug}\` for ${t.agent} — expires ${t.expiresAt} ${C.dim}(${ttl}h)${C.off}`);
+    return;
   }
-
-  const t = claim(root, slug, agent, ttl);
+  if (t.takenOverFrom) {
+    const prev = t.takenOverFrom;
+    const work = leftoverWork(root, prev.claimedAt);
+    console.log(`${C.yellow}Took over${C.off} \`${slug}\` from ${prev.agent} (last active ${lastSeen(prev)}).`);
+    console.log(`The previous agent may have left work but no log.`);
+    console.log(`  ${work.label}: ${describeFiles(work.files)}`);
+    console.log(
+      `${C.dim}${work.git ? "Inspect `git status` and `git diff`" : "Read those files"} before editing, decide what to keep,`,
+    );
+    console.log(`and record the takeover and what you found in your log.${C.off}\n`);
+  }
   console.log(`${C.green}Claimed${C.off} \`${t.slug}\` for ${t.agent}`);
-  console.log(`  expires ${t.expiresAt} ${C.dim}(${ttl}h)${C.off}`);
+  console.log(`  expires ${t.expiresAt} ${C.dim}(${ttl}h — renew by re-running this command)${C.off}`);
   console.log(`\n${C.dim}When done: relay log --agent ${agent} --task ${slug}${C.off}`);
 }
 
@@ -170,6 +220,7 @@ function cmdLog({ flags }) {
     next: flags.next,
   });
   writeIndex(root);
+  renewIfHeld(root, flags.task, flags.agent, readConfig(root).claimTtlHours);
   console.log(`${C.green}Created${C.off} ${path.relative(root, res.path)}  ${C.dim}(seq ${res.seq})${C.off}`);
   console.log(`${C.dim}history.md regenerated.${C.off}`);
   if (!flags.summary || !flags.next) {
@@ -268,7 +319,7 @@ function cmdHarness({ positional, flags }) {
     return 0;
   }
   const res = runInit(root, { harnesses: positional, force: Boolean(flags.force) });
-  const added = res.created.filter((f) => !f.startsWith(".relay"));
+  const added = [...res.created, ...res.updated].filter((f) => !f.startsWith(".relay"));
   console.log(added.length ? `${C.green}Added:${C.off}\n${added.map((f) => `  + ${f}`).join("\n")}` : `${C.dim}Nothing new; all pointer files already exist.${C.off}`);
   return 0;
 }
@@ -289,14 +340,17 @@ SETUP
     --harness <a,b>              Comma-separated harness ids (see: relay harness)
     --all                        Wire every known harness
     --name <name>                Project name (default: directory name)
-    --force                      Overwrite existing files
+    --mode new|git|code          Override detection: new project, existing with
+                                 git history, existing without git history
+    --force                      Overwrite relay-owned files
   harness [id...]              List known harnesses, or add pointers for some
 
 DAILY USE
   status                       Where things stand and what to pick up next
-  claim <task> --agent <name>  Claim one task
+  claim <task> --agent <name>  Claim one task; re-run to renew your own claim
     --ttl <hours>                Override the claim expiry
-    --force                      Take over an expired or abandoned claim
+    --force                      Take over someone else's claim (expired, or
+                                 the user asked you to continue it)
   block <task> --reason "..."  Mark a task blocked with what is needed
   log --agent <n> --task <t>   Create the next history entry
     --status done|partial|blocked

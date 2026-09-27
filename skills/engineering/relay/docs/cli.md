@@ -10,22 +10,58 @@ current directory or a parent.
 
 ## `relay init`
 
-Create `.relay/` and the harness pointer files.
+Create `.relay/` and the harness pointer files, adapting to whether the project
+is new or already exists.
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--harness <a,b>` | `generic` | Comma-separated harness ids (see `relay harness`) |
 | `--all` | — | Wire every known harness |
 | `--name <name>` | directory name | Project name used in generated headings |
-| `--force` | — | Overwrite files that already exist |
+| `--mode <m>` | detected | `new`, `git`, or `code` — override detection |
+| `--force` | — | Overwrite relay-owned files that already exist |
 
 ```bash
 relay init --harness claude-code,cursor,codex
 relay init --all
+relay init --mode code       # existing code whose git history you want ignored
 ```
 
-Existing files are **left alone** unless `--force` is passed, so re-running
-`init` to add a harness never clobbers your `PROJECT.md`.
+### Modes
+
+| Mode | Detected when | What `init` adds |
+| --- | --- | --- |
+| `new` | No files beyond dotfiles, README, LICENSE and agent instruction files | Templates only; history stays empty |
+| `git` | Existing files and at least two commits touching this directory | `history/0001_relay_bootstrap.md`, facts from the git log |
+| `code` | Existing files, but no git or a single commit | `history/0001_relay_bootstrap.md`, facts from the working tree |
+
+Dependencies and build output (`node_modules/`, `dist/`, `target/`, …) never
+count as existing work. A single-commit repository counts as `code`, because
+that is usually a scaffold or code committed in one go — the code, not the log,
+is what the adopting agent has to read.
+
+The bootstrap entry holds facts only: dates, contributors, recent commits, the
+most-changed files, manifests and scripts, CI and deploy config, docs, a
+`CHANGELOG` timeline. Its `summary:` and `next:` are placeholders, and
+`relay doctor` fails with `bootstrap-incomplete` until an agent finishes setup
+with the user — see [setup.md](setup.md).
+
+No bootstrap is written when legacy `history_<agent>_<NN>.md` files are found
+(run `relay migrate` instead), or when `.relay/` already existed — re-running
+`init` to add a harness never starts generating history. Pass `--mode` to force
+one onto a project set up with an older relay.
+
+### Existing files
+
+Relay-owned files (`.relay/*`, `.cursor/rules/relay.mdc`, …) are **left alone**
+unless `--force` is passed, so re-running `init` never clobbers your
+`PROJECT.md`.
+
+Shared files that other tools and you also write — `AGENTS.md`, `CLAUDE.md`,
+`WARP.md`, `GEMINI.md`, `CONVENTIONS.md` — get a block between
+`<!-- relay:start -->` and `<!-- relay:end -->` appended instead. Your content
+is never touched, and re-running `init` replaces the block rather than adding a
+second one.
 
 ---
 
@@ -38,31 +74,50 @@ agent runs first.
 relay status
 ```
 
-Prints task counts, live claims (marking expired ones), blocked tasks with their
-reasons, the most recent handoff including its `next:` line, and the next
-unblocked task with the exact command to claim it.
+Prints task counts; how many commits of real work have landed since the last
+committed log (or that commit tracking is off without git); a warning if setup
+is unfinished; live claims with when each holder was last active, marking
+expired ones; blocked tasks with their reasons; the most recent handoff
+including its `next:` line; and the next unblocked task with the exact command
+to claim it.
 
 ---
 
 ## `relay claim <task>`
 
-Take ownership of exactly one task.
+Take ownership of exactly one task, or renew a claim you already hold.
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--agent <name>` | **required** | Your harness name, lowercase |
-| `--ttl <hours>` | `config.claimTtlHours` (4) | Claim expiry |
-| `--force` | — | Take over an existing claim |
+| `--ttl <hours>` | `config.claimTtlHours` (1) | Claim expiry |
+| `--force` | — | Take over someone else's claim |
 
 ```bash
 relay claim api-pagination --agent claude
-relay claim api-pagination --agent cursor --ttl 8
+relay claim api-pagination --agent claude          # again, later: renews
+relay claim api-pagination --agent cursor --force  # takeover
 ```
 
-Refuses to steal a live claim. If the claim has expired, `--force` takes it over
-and prints who held it — record that takeover in your log.
+**Renewal.** Re-running `claim` on your own live claim renews it: the line in
+`tasks.md` gains a `seen` time and a fresh expiry. `relay log` renews it too.
+Claims are short (one hour by default) and renewed as work continues, so a
+claim that stops being renewed means its agent has almost certainly stopped.
 
-Also refuses to reopen a `DONE` task; add a new task instead.
+**Someone else's live claim** is refused, with evidence to show the user: when
+the holder was last active, any logs it wrote since claiming, and its likely
+leftover work — uncommitted changes in a git repository, or files modified
+since the claim without one. relay cannot tell a crashed agent from one still
+working in another window, so the decision is the user's.
+
+**`--force`** takes the claim over, expired or not, and prints who held it and
+the same leftover-work list. Use it when the claim has expired or when the user
+asked you to continue that task. Afterwards, inspect that work — `git status`
+and `git diff`, or the listed files — because the previous agent may have left
+work but no log, and record the takeover in your log.
+
+`claim` never reopens a `DONE` task, with or without `--force`; add a new task
+instead.
 
 ---
 
@@ -107,6 +162,9 @@ relay log --agent claude --task staging-deploy \
 Creates `.relay/history/NNNN_<agent>_<task>.md` from a template, then runs
 `relay index`. Open the file and fill in the body — the template sections exist
 because each one has cost somebody a rediscovery.
+
+In a git repository the entry records `git_head`, the commit the work was based
+on. If you hold a claim on the task, logging renews it.
 
 If you omit `--summary`/`--next`, placeholders are written and `relay doctor`
 will fail until you replace them. That is intentional.
@@ -172,13 +230,23 @@ Exit code `0` when clean, `1` when there are errors (or warnings under
 | `seq-gap` | warn | A sequence number is missing, usually a deleted log |
 | `incomplete-frontmatter` | error | A required field is missing |
 | `placeholder-left` | error | A template `summary:` or `next:` was never filled in |
+| `bootstrap-incomplete` | error | relay was adopted into an existing project but setup was never finished |
 | `seq-mismatch` | error | Front-matter `seq` disagrees with the filename |
 | `claim-no-ttl` | warn | A claim was hand-written without an expiry |
 | `claim-expired` | error | A claim outlived the agent that made it |
 | `done-no-log` | warn | A `DONE` task cites no history entry |
 | `done-bad-log` | error | A `DONE` task cites a log that does not exist |
 | `competing-tracker` | warn | Another tracker file exists at the project root |
+| `unlogged-commits` | warn | `unloggedCommitsWarn` or more commits of real work since the last committed log |
 | `possible-secret` | error | Something credential-shaped is in `.relay/` |
+
+### How unlogged commits are counted
+
+The reference point is the newest commit that included a file in
+`.relay/history/` — not the `git_head` inside the log, because logs are written
+before the commit that carries the work, and that commit would otherwise always
+count. Commits that only touch `.relay/` are bookkeeping and never count. If
+`.relay/` is never committed, the newest log's `git_head` is used instead.
 
 ---
 
@@ -230,7 +298,8 @@ relay help
 
 ```json
 {
-  "claimTtlHours": 4,
+  "claimTtlHours": 1,
+  "unloggedCommitsWarn": 5,
   "gates": [],
   "trackerAliases": ["todo.md", "build_plan.md", "DEV_READY.md"]
 }
@@ -238,6 +307,7 @@ relay help
 
 | Key | Description |
 | --- | --- |
-| `claimTtlHours` | Default claim expiry. Raise it for long-running tasks, lower it for fast-moving projects with many agents. |
+| `claimTtlHours` | How long a claim lasts without renewal. Agents renew by re-running `relay claim`; raise this if your agents cannot renew often. |
+| `unloggedCommitsWarn` | Commits of unlogged work before `doctor` warns. |
 | `gates` | Commands agents should run before marking work done. Documented in `PROJECT.md`; relay never runs them. |
 | `trackerAliases` | Filenames `doctor` flags as competing trackers if found at the project root. |

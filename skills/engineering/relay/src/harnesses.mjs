@@ -13,6 +13,7 @@
  * against your harness's current docs — relay still works, because any harness
  * can be pointed at `.relay/` manually.
  */
+import path from "node:path";
 
 export const AGENTS_MD = "AGENTS.md";
 
@@ -129,14 +130,31 @@ export const HARNESSES = {
 
 export const ALL_HARNESSES = Object.keys(HARNESSES);
 
-/** The pointer every harness file contains. Short by design — it must not drift. */
+/**
+ * Files other tools and the user also write to — `AGENTS.md`, `CLAUDE.md` and
+ * the like. relay adds a marked block to these instead of owning them. Files
+ * with `relay` in the name are relay's alone.
+ */
+export function isShared(rel) {
+  return !path.basename(rel).includes("relay");
+}
+
+/**
+ * The pointer every harness file contains. Short by design — it must not drift.
+ * It starts at a second-level heading because it is usually a block inside a
+ * file the user already owns.
+ */
 export function pointer(projectName) {
-  return `# ${projectName} — agent entrypoint
+  return `## relay — how agents hand off work on ${projectName}
 
 This project uses **relay** to hand work between AI coding agents without
 losing context. Several agents, in different tools, with separate context
 windows and credit limits, work on this repository. Chat transcripts are not
 shared memory. The files under \`.relay/\` are.
+
+**If \`.relay/history/0001_relay_bootstrap.md\` still has \`TODO:\` in its
+\`summary:\` or \`next:\`, relay setup is unfinished — finish it with the user
+first, following \`docs/setup.md\` in the relay skill.**
 
 **Before doing anything, read in this order:**
 
@@ -150,9 +168,10 @@ was true when it was written; it does not override the current repository.
 
 **The rules, in short:**
 
-- Claim exactly one task before editing: \`relay claim <task> --agent <you>\`
+- Claim exactly one task before editing: \`relay claim <task> --agent <you>\`,
+  and re-run it between major steps to renew the claim
 - Never take a task someone else holds unless its claim has expired or the
-  user reassigns it
+  user asks you to continue it
 - Before marking anything done: run the gates, then \`relay log\`, then
   \`relay done\`
 - Every log must end with a real \`next:\` — the single action the following

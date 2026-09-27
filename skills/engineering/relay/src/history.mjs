@@ -24,9 +24,21 @@ import {
   serializeFrontmatter,
   write,
 } from "./core.mjs";
+import { commitsSince, head, isGitRepo, lastCommitTouching } from "./git.mjs";
 
 export const REQUIRED_FIELDS = ["seq", "agent", "date", "task", "status", "summary", "next"];
 export const STATUSES = ["done", "partial", "blocked"];
+
+const isPlaceholder = (v) => typeof v === "string" && v.startsWith("TODO:");
+
+/** The adoption bootstrap entry, if it exists and an agent has not finished it. */
+export function bootstrapPending(entries) {
+  return (
+    entries.find(
+      (e) => e.data.bootstrap && (isPlaceholder(e.data.summary) || isPlaceholder(e.data.next)),
+    ) || null
+  );
+}
 
 const HEADER = `# History index
 
@@ -126,10 +138,35 @@ export function createLog(root, opts) {
     summary: summary || "TODO: one line describing what changed.",
     next: next || "TODO: the single next action for the following agent.",
     supersedes: [],
+    git_head: head(root) || undefined,
   });
 
   write(target, `${front}\n\n${body || template(task)}`);
   return { path: target, file, seq };
+}
+
+/**
+ * How much work has landed in git without a handoff log.
+ *
+ * The reference point is the newest commit that included a history log, not
+ * the `git_head` recorded inside it: logs are written before the commit that
+ * carries the work (agents do not commit unless asked), so that commit would
+ * otherwise always count as unlogged. `git_head` is the fallback for projects
+ * whose `.relay/` is never committed.
+ *
+ * Returns `{ git: false }` without a repository, and `count: null` when there
+ * is nothing to measure from yet.
+ */
+export function commitDrift(root) {
+  if (!isGitRepo(root)) return { git: false, count: null };
+  const logged = lastCommitTouching(root, ".relay/history");
+  if (logged) return { git: true, count: commitsSince(root, logged), since: "the last committed log" };
+  const withHead = readHistory(root).filter((e) => e.data.git_head);
+  if (withHead.length) {
+    const last = withHead[withHead.length - 1];
+    return { git: true, count: commitsSince(root, String(last.data.git_head)), since: last.file };
+  }
+  return { git: true, count: null };
 }
 
 function template(task) {

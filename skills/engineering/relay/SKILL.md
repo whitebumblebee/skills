@@ -1,6 +1,6 @@
 ---
 name: relay
-description: Continue work another AI agent started, and leave work another agent can continue. Use at the start of any session on a project containing a .relay/ directory, when deciding what to work on next, when handing off because context or credits are running out, and before marking any task complete. Covers task claiming, handoff logs, the generated history index, and cross-harness continuity between tools such as Claude Code, Cursor, Codex, Warp, Kiro, Cline and opencode.
+description: Continue work another AI agent started, and leave work another agent can continue. Use when asked to set up or add relay to a project, new or existing; at the start of any session on a project containing a .relay/ directory; when deciding what to work on next; when asked to continue or pick up another agent's work; when handing off because context or credits are running out; and before marking any task complete. Covers project setup interviews, task claiming, handoff logs, the generated history index, and cross-harness continuity between tools such as Claude Code, Cursor, Codex, Warp, Kiro, Cline and opencode.
 ---
 
 # relay
@@ -29,6 +29,21 @@ markdown, logs are `.relay/history/NNNN_<agent>_<task>.md` on a four-digit
 global sequence, and you keep `.relay/history.md` in sync yourself. Never skip
 the protocol because the CLI is missing.
 
+## Setting up relay
+
+Setup is unfinished when there is no `.relay/` yet, or when
+`.relay/history/0001_relay_bootstrap.md` still has `TODO:` in `summary:` or
+`next:` (`relay status` says so). Finish it before any other work:
+
+1. `relay init --harness <the tools this project uses>`. It detects the mode —
+   **new** (empty project), **git** (existing work with git history), or
+   **code** (existing work, no git history) — and prints which.
+2. Read `docs/setup.md`, next to this file, and follow the section for that
+   mode. It is an interview: gather what the project can tell you first, then
+   ask the user only what it cannot. **Every suggestion you make — CI,
+   deployment, payments, anything — comes with a priority question**, and
+   `tasks.md` is ordered by the answers.
+
 ## Start of session
 
 Read, in this order:
@@ -54,18 +69,52 @@ relay claim <task> --agent <your-harness-name>
 
 One task, one owner. Do not touch a task someone else holds.
 
-A claim carries an expiry, because agents die mid-task — credits run out,
-laptops close, processes crash. If `relay status` shows a claim as EXPIRED, the
-agent that held it is almost certainly gone and you may take it over:
+Claims expire after an hour, because agents die mid-task — credits run out,
+laptops close, processes crash. **Re-run the same `relay claim` between major
+steps** (after each test run, say) to renew yours; `relay log` renews it too.
+A claim that stops being renewed is how everyone else learns you are gone.
 
-```bash
-relay claim <task> --agent <you> --force
-```
+### Taking over someone else's task
 
-Record the takeover in your log. If a claim is live and you believe it is
-abandoned anyway, ask the user rather than assuming.
+Take a claim held by another agent with `--force` only when:
+
+- `relay status` shows it EXPIRED, or
+- **the user asked you to continue or pick up that task** — that is a
+  reassignment, so do not ask them again.
+
+Otherwise `relay claim` refuses and prints evidence: when the holder was last
+active, its logs since claiming, and its likely leftover work. Show that to the user and
+ask. Never take a live claim on your own judgement — a crashed agent and one
+still working in another window look identical in the files.
+
+After any takeover, assume the previous agent left work but no log. `relay
+claim` lists where to look: uncommitted changes with git, or files modified
+since the claim without it. **Inspect them before editing** — `git status` and
+`git diff`, or read the listed files — decide what to keep, and record the
+takeover and what you found in your log.
 
 Work inside the claimed task. Scope creep is how two agents collide.
+
+### Work you discover along the way
+
+A bug you noticed, a refactor, a missing feature, anything you would suggest —
+if it is outside your claimed task, it becomes a new task, not something you
+do now:
+
+1. Check *Deferred and declined* in `.relay/PROJECT.md` first. Never re-suggest
+   what the user already postponed or turned down.
+2. **Ask the user where it goes: now, next, later, or not needed.** Batch
+   several findings into one question. Add it to `tasks.md` as a `TODO` at
+   that position; record "later" and "not needed" under *Deferred and
+   declined* with the reason.
+3. If you cannot ask, add it at the bottom of `tasks.md` with the note
+   `priority not confirmed`, and list it in your log.
+
+Do it inside your current task only if it blocks that task, and say so in
+your log.
+
+If `relay status` finds no available task, tell the user and ask what comes
+next. New work you propose follows the same rule.
 
 ## While working
 
@@ -154,7 +203,8 @@ Change the log file, then run `relay index`.
 | | |
 | --- | --- |
 | `relay status` | Where things stand; the next unblocked task |
-| `relay claim <t> --agent <a>` | Claim one task (`--force` to take over an expired claim) |
+| `relay init` | Set up relay; detects new / git / code mode |
+| `relay claim <t> --agent <a>` | Claim one task, or renew your own (`--force` to take over — see above) |
 | `relay block <t> --reason "…"` | Mark blocked with what is needed |
 | `relay log --agent <a> --task <t>` | Create the next history entry |
 | `relay done <t>` | Mark done, citing your log |

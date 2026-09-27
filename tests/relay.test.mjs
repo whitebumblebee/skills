@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,9 +13,25 @@ import {
   serializeFrontmatter,
   slugify,
 } from "../skills/engineering/relay/src/core.mjs";
-import { runInit } from "../skills/engineering/relay/src/init.mjs";
-import { createLog, indexIsCurrent, writeIndex } from "../skills/engineering/relay/src/history.mjs";
-import { claim, isExpired, nextUnblocked, readTasks, updateTask } from "../skills/engineering/relay/src/tasks.mjs";
+import { BLOCK_START, runInit } from "../skills/engineering/relay/src/init.mjs";
+import { detectMode } from "../skills/engineering/relay/src/adopt.mjs";
+import {
+  bootstrapPending,
+  commitDrift,
+  createLog,
+  indexIsCurrent,
+  writeIndex,
+} from "../skills/engineering/relay/src/history.mjs";
+import {
+  claim,
+  isExpired,
+  leftoverWork,
+  nextUnblocked,
+  readTasks,
+  renewIfHeld,
+  updateTask,
+} from "../skills/engineering/relay/src/tasks.mjs";
+import { readHistory } from "../skills/engineering/relay/src/core.mjs";
 import { runDoctor } from "../skills/engineering/relay/src/doctor.mjs";
 import { planMigration } from "../skills/engineering/relay/src/migrate.mjs";
 
@@ -25,6 +42,30 @@ function project() {
   runInit(root, { harnesses: ["generic"] });
   return root;
 }
+
+const git = (root, ...args) =>
+  execFileSync(
+    "git",
+    ["-c", "user.name=Test", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args],
+    { cwd: root, stdio: "pipe" },
+  );
+
+/** A repository with `n` commits of real code. */
+function repo(n = 2) {
+  const root = sandbox();
+  git(root, "init", "-q", "-b", "main");
+  for (let i = 0; i < n; i += 1) {
+    fs.writeFileSync(path.join(root, "app.js"), `// ${i}\n`);
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", `commit ${i}`);
+  }
+  return root;
+}
+
+const commitAll = (root, msg) => {
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", msg);
+};
 
 /* ------------------------------------------------------------------ core */
 
@@ -81,7 +122,7 @@ test("claiming sets an expiry and refuses to steal a live claim", () => {
   const t = claim(root, "first-task", "claude", 4);
   assert.equal(t.agent, "claude");
   assert.ok(t.expiresAt);
-  assert.throws(() => claim(root, "first-task", "cursor", 4), /already claimed by claude/);
+  assert.throws(() => claim(root, "first-task", "cursor", 4), /claimed by claude/);
 });
 
 test("an expired claim is takeable", () => {
@@ -203,4 +244,285 @@ test("migration flags files that were missing from the legacy index", () => {
   );
   const plan = planMigration(root, { from: "." });
   assert.equal(plan.unindexed, 1);
+});
+
+/* ---------------------------------------------------- claims: heartbeat */
+
+test("re-claiming your own live claim renews it instead of refusing", () => {
+  const root = project();
+  claim(root, "first-task", "claude", 1);
+  updateTask(root, "first-task", (t) => {
+    t.expiresAt = addHours(new Date().toISOString(), 0.1);
+  });
+  const renewed = claim(root, "first-task", "claude", 1);
+  assert.equal(renewed.renewed, true);
+  const [task] = readTasks(root);
+  assert.ok(task.seenAt, "renewal records when the holder was last seen");
+  assert.ok(Date.parse(task.expiresAt) > Date.now() + 50 * 60 * 1000);
+});
+
+test("the seen field survives a round-trip through tasks.md", () => {
+  const root = project();
+  claim(root, "first-task", "claude", 1);
+  claim(root, "first-task", "claude", 1);
+  const [task] = readTasks(root);
+  assert.match(task.raw, / — seen \d{4}-/);
+  assert.equal(task.agent, "claude");
+});
+
+test("renewIfHeld renews only the holder's own live claim", () => {
+  const root = project();
+  claim(root, "first-task", "claude", 1);
+  assert.equal(renewIfHeld(root, "first-task", "cursor", 1), false);
+  assert.equal(renewIfHeld(root, "first-task", "claude", 1), true);
+  assert.equal(renewIfHeld(root, "no-such-task", "claude", 1), false);
+});
+
+test("a live claim is refused with evidence for the user", () => {
+  const root = project();
+  claim(root, "first-task", "claude", 1);
+  assert.throws(
+    () => claim(root, "first-task", "cursor", 1),
+    (err) =>
+      /last active/.test(err.message) &&
+      /files modified since the claim/.test(err.message) &&
+      /--force/.test(err.message),
+  );
+});
+
+test("without git, leftover work is the files modified since the claim", () => {
+  const root = project();
+  fs.writeFileSync(path.join(root, "old.js"), "1");
+  const past = new Date(Date.now() - 3600 * 1000);
+  fs.utimesSync(path.join(root, "old.js"), past, past);
+  const t = claim(root, "first-task", "claude", 1);
+  fs.writeFileSync(path.join(root, "half-done.js"), "2");
+  const work = leftoverWork(root, t.claimedAt);
+  assert.equal(work.git, false);
+  assert.ok(work.files.includes("half-done.js"));
+  assert.ok(!work.files.includes("old.js"));
+  assert.ok(!work.files.some((f) => f.startsWith(".relay")), "relay's own files are not leftover work");
+});
+
+test("with git, leftover work is the uncommitted changes", () => {
+  const root = repo(2);
+  runInit(root, {});
+  commitAll(root, "adopt relay");
+  fs.writeFileSync(path.join(root, "app.js"), "// half done\n");
+  const work = leftoverWork(root, new Date().toISOString());
+  assert.equal(work.git, true);
+  assert.deepEqual(work.files, ["app.js"]);
+});
+
+test("force takes over a live claim and reports who held it", () => {
+  const root = project();
+  claim(root, "first-task", "claude", 1);
+  const t = claim(root, "first-task", "cursor", 1, { force: true });
+  assert.equal(t.agent, "cursor");
+  assert.equal(t.takenOverFrom.agent, "claude");
+});
+
+test("force never reopens a DONE task", () => {
+  const root = project();
+  createLog(root, { agent: "claude", task: "first-task", summary: "s", next: "n" });
+  updateTask(root, "first-task", (t) => {
+    t.state = "DONE";
+    t.log = "0001";
+  });
+  assert.throws(() => claim(root, "first-task", "cursor", 1, { force: true }), /already DONE/);
+});
+
+/* ------------------------------------------------------- init: detection */
+
+test("an empty directory, or one with only README and LICENSE, is a new project", () => {
+  const root = sandbox();
+  assert.equal(detectMode(root), "new");
+  fs.writeFileSync(path.join(root, "README.md"), "# x");
+  fs.writeFileSync(path.join(root, "LICENSE"), "MIT");
+  fs.writeFileSync(path.join(root, ".gitignore"), "node_modules");
+  assert.equal(detectMode(root), "new");
+});
+
+test("code without git history is detected as code mode", () => {
+  const root = sandbox();
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src", "index.js"), "1");
+  assert.equal(detectMode(root), "code");
+});
+
+test("a single-commit repository counts as code, not git history", () => {
+  assert.equal(detectMode(repo(1)), "code");
+});
+
+test("a repository with real history is detected as git mode", () => {
+  assert.equal(detectMode(repo(3)), "git");
+});
+
+test("dependencies and build output do not make a project look existing", () => {
+  const root = sandbox();
+  fs.mkdirSync(path.join(root, "node_modules", "x"), { recursive: true });
+  fs.writeFileSync(path.join(root, "node_modules", "x", "index.js"), "1");
+  assert.equal(detectMode(root), "new");
+});
+
+/* ---------------------------------------------------- init: shared files */
+
+test("init adds a marked block to an existing AGENTS.md and keeps the user's content", () => {
+  const root = sandbox();
+  fs.writeFileSync(path.join(root, "AGENTS.md"), "# Mine\n\nUse pnpm.\n");
+  const res = runInit(root, { harnesses: ["codex"] });
+  const text = fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
+  assert.ok(text.startsWith("# Mine\n\nUse pnpm.\n"));
+  assert.ok(text.includes(BLOCK_START));
+  assert.ok(text.includes(".relay/"));
+  assert.deepEqual(res.updated, ["AGENTS.md"]);
+});
+
+test("re-running init replaces the block instead of duplicating it", () => {
+  const root = sandbox();
+  fs.writeFileSync(path.join(root, "AGENTS.md"), "# Mine\n");
+  runInit(root, { harnesses: ["codex"] });
+  runInit(root, { harnesses: ["codex"] });
+  const text = fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
+  assert.equal(text.split(BLOCK_START).length - 1, 1);
+});
+
+test("relay-owned files are still left alone without --force", () => {
+  const root = sandbox();
+  fs.mkdirSync(path.join(root, ".cursor", "rules"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".cursor", "rules", "relay.mdc"), "MINE");
+  runInit(root, { harnesses: ["cursor"] });
+  assert.equal(fs.readFileSync(path.join(root, ".cursor", "rules", "relay.mdc"), "utf8"), "MINE");
+});
+
+/* ------------------------------------------------------ init: bootstrap */
+
+test("new projects get no bootstrap entry", () => {
+  const res = runInit(sandbox(), {});
+  assert.equal(res.mode, "new");
+  assert.equal(res.bootstrap, null);
+});
+
+test("git mode writes a bootstrap entry built from the log, which doctor rejects until finished", () => {
+  const root = repo(3);
+  const res = runInit(root, {});
+  assert.equal(res.mode, "git");
+  const text = fs.readFileSync(path.join(root, res.bootstrap), "utf8");
+  assert.match(text, /bootstrap: git/);
+  assert.match(text, /3 commits/);
+  assert.match(text, /commit 2/);
+  assert.ok(bootstrapPending(readHistory(root)));
+  const codes = runDoctor(root).findings.map((f) => f.code);
+  assert.ok(codes.includes("bootstrap-incomplete"));
+  assert.ok(!codes.includes("placeholder-left"), "one clear error, not two");
+});
+
+test("code mode writes a bootstrap entry from the working tree and says dates are a guess", () => {
+  const root = sandbox();
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "legacy", scripts: { start: "x" } }));
+  fs.writeFileSync(path.join(root, "server.js"), "1");
+  const res = runInit(root, {});
+  assert.equal(res.mode, "code");
+  const text = fs.readFileSync(path.join(root, res.bootstrap), "utf8");
+  assert.match(text, /bootstrap: code/);
+  assert.match(text, /no usable git history/);
+  assert.match(text, /scripts: start/);
+});
+
+test("a finished bootstrap entry passes doctor", () => {
+  const root = repo(2);
+  const res = runInit(root, {});
+  const file = path.join(root, res.bootstrap);
+  fs.writeFileSync(
+    file,
+    fs
+      .readFileSync(file, "utf8")
+      .replace(/^summary: .*$/m, "summary: A shop; checkout works, payments deferred.")
+      .replace(/^next: .*$/m, "next: Build the cart page.")
+      .replace(/^status: partial$/m, "status: done"),
+  );
+  writeIndex(root);
+  assert.equal(bootstrapPending(readHistory(root)), null);
+  assert.equal(runDoctor(root).counts.error, 0, JSON.stringify(runDoctor(root).findings));
+});
+
+test("legacy history files suppress the bootstrap in favour of migration", () => {
+  const root = sandbox();
+  fs.writeFileSync(path.join(root, "app.js"), "1");
+  fs.writeFileSync(path.join(root, "history_cursor_01.md"), "# old");
+  const res = runInit(root, {});
+  assert.equal(res.legacy, ".");
+  assert.equal(res.bootstrap, null);
+});
+
+test("re-running init never adds a bootstrap to a project that was set up earlier", () => {
+  const root = sandbox();
+  runInit(root, {});
+  fs.writeFileSync(path.join(root, "app.js"), "1");
+  const res = runInit(root, { harnesses: ["zed"] });
+  assert.equal(res.bootstrap, null);
+  assert.equal(readHistory(root).length, 0);
+});
+
+test("--mode forces a bootstrap onto a project adopted with an older relay", () => {
+  const root = sandbox();
+  runInit(root, {});
+  fs.writeFileSync(path.join(root, "app.js"), "1");
+  const res = runInit(root, { mode: "code" });
+  assert.ok(res.bootstrap);
+});
+
+test("--mode git is refused without git history", () => {
+  assert.throws(() => runInit(sandbox(), { mode: "git" }), /at least two commits/);
+  assert.throws(() => runInit(sandbox(), { mode: "nope" }), /--mode must be one of/);
+});
+
+/* ----------------------------------------------------------------- drift */
+
+test("drift is off without git", () => {
+  assert.deepEqual(commitDrift(project()), { git: false, count: null });
+});
+
+test("commits after the last committed log are counted; relay bookkeeping is not", () => {
+  const root = repo(2);
+  runInit(root, {});
+  commitAll(root, "adopt relay");
+  assert.equal(commitDrift(root).count, 0);
+
+  fs.writeFileSync(path.join(root, "app.js"), "// work\n");
+  commitAll(root, "work 1");
+  fs.appendFileSync(path.join(root, ".relay", "tasks.md"), "\n");
+  commitAll(root, "only relay bookkeeping");
+  assert.equal(commitDrift(root).count, 1);
+
+  createLog(root, { agent: "claude", task: "t", summary: "s", next: "n" });
+  commitAll(root, "log it");
+  assert.equal(commitDrift(root).count, 0);
+});
+
+test("logs record git_head, which is the fallback when .relay is never committed", () => {
+  const root = repo(2);
+  runInit(root, { mode: "new" });
+  const { path: logPath } = createLog(root, { agent: "claude", task: "t", summary: "s", next: "n" });
+  assert.match(fs.readFileSync(logPath, "utf8"), /^git_head: \S+$/m);
+  fs.writeFileSync(path.join(root, ".gitignore"), ".relay/\n");
+  fs.writeFileSync(path.join(root, "app.js"), "// more\n");
+  commitAll(root, "work without relay committed");
+  const drift = commitDrift(root);
+  assert.equal(drift.count, 1);
+  assert.match(drift.since, /0001_claude_t\.md/);
+});
+
+test("doctor warns about unlogged commits past the configured threshold", () => {
+  const root = repo(2);
+  runInit(root, {});
+  commitAll(root, "adopt relay");
+  const cfg = path.join(root, ".relay", "config.json");
+  fs.writeFileSync(cfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(cfg, "utf8")), unloggedCommitsWarn: 2 }));
+  commitAll(root, "config");
+  for (const i of [1, 2]) {
+    fs.writeFileSync(path.join(root, "app.js"), `// unlogged work ${i}\n`);
+    commitAll(root, `work ${i}`);
+  }
+  assert.ok(runDoctor(root).findings.some((f) => f.code === "unlogged-commits"));
 });

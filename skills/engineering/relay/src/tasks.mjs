@@ -7,7 +7,9 @@
  * several half-maintained trackers with no declared precedence, and the cost
  * lands on whichever agent arrives last.
  */
-import { UserError, addHours, nowIso, paths, read, write } from "./core.mjs";
+import { UserError, addHours, nowIso, paths, read, readHistory, write } from "./core.mjs";
+import { dirtyFiles, isGitRepo } from "./git.mjs";
+import { scanTree } from "./adopt.mjs";
 
 export const STATES = ["TODO", "IN_PROGRESS", "BLOCKED", "DONE"];
 
@@ -53,6 +55,7 @@ export function readTasks(root) {
       raw: line,
       agent: null,
       claimedAt: null,
+      seenAt: null,
       expiresAt: null,
       note: null,
       log: null,
@@ -60,8 +63,12 @@ export function readTasks(root) {
     if (state === "IN_PROGRESS") {
       task.agent = parts[0] || null;
       task.claimedAt = parts[1] || null;
-      const exp = parts.find((p) => p.startsWith("expires "));
-      task.expiresAt = exp ? exp.slice("expires ".length).trim() : null;
+      const field = (name) => {
+        const p = parts.find((x) => x.startsWith(`${name} `));
+        return p ? p.slice(name.length + 1).trim() : null;
+      };
+      task.seenAt = field("seen");
+      task.expiresAt = field("expires");
     } else if (state === "BLOCKED") {
       task.note = parts.join(" — ") || null;
     } else if (state === "DONE") {
@@ -88,6 +95,7 @@ export function formatTaskLine(task) {
   let line = `${task.indent}- [${box}] \`${task.slug}\` — ${task.state}`;
   if (task.state === "IN_PROGRESS") {
     line += ` — ${task.agent} — ${task.claimedAt}`;
+    if (task.seenAt) line += ` — seen ${task.seenAt}`;
     if (task.expiresAt) line += ` — expires ${task.expiresAt}`;
   } else if (task.state === "BLOCKED" && task.note) {
     line += ` — ${task.note}`;
@@ -109,30 +117,128 @@ export function updateTask(root, slug, mutate) {
   return task;
 }
 
-export function claim(root, slug, agent, ttlHours) {
+/**
+ * Claim, renew, or take over a task.
+ *
+ * - Re-claiming your own live claim renews it. That is the heartbeat: a claim
+ *   that keeps being renewed belongs to a live agent, and one that stops being
+ *   renewed expires soon after its agent dies.
+ * - A live claim held by someone else is refused with the evidence an agent
+ *   needs to ask the user, unless `force` is set. Liveness cannot be known from
+ *   files alone — a crashed agent and one still working in another window look
+ *   identical — so the takeover decision belongs to the user or the clock.
+ * - A DONE task is never reopened, forced or not.
+ *
+ * Returns the task, with `renewed` or `takenOverFrom` set when relevant.
+ */
+export function claim(root, slug, agent, ttlHours, { force = false } = {}) {
   const existing = findTask(root, slug);
-  if (existing.state === "IN_PROGRESS" && !isExpired(existing)) {
-    throw new UserError(
-      `\`${slug}\` is already claimed by ${existing.agent} at ${existing.claimedAt}` +
-        (existing.expiresAt ? ` (expires ${existing.expiresAt}).` : ".") +
-        `\nTake it over only if the user reassigns it, or after it expires.` +
-        `\nThen: relay claim ${slug} --agent ${agent} --force`,
-    );
-  }
   if (existing.state === "DONE") {
     throw new UserError(
       `\`${slug}\` is already DONE (${existing.log}). Add a new task instead of reopening this one.`,
     );
   }
   const at = nowIso();
-  return updateTask(root, slug, (t) => {
-    t.state = "IN_PROGRESS";
-    t.agent = agent;
-    t.claimedAt = at;
-    t.expiresAt = addHours(at, ttlHours);
-    t.note = null;
-    t.log = null;
+  const held = existing.state === "IN_PROGRESS";
+
+  if (held && existing.agent === agent && !isExpired(existing)) {
+    const t = updateTask(root, slug, (x) => {
+      x.seenAt = at;
+      x.expiresAt = addHours(at, ttlHours);
+    });
+    return Object.assign(t, { renewed: true });
+  }
+
+  if (held && !isExpired(existing) && !force) {
+    throw new UserError(liveClaimMessage(root, existing, agent));
+  }
+
+  const takenOverFrom = held && existing.agent !== agent ? { ...existing } : null;
+  const t = updateTask(root, slug, (x) => {
+    x.state = "IN_PROGRESS";
+    x.agent = agent;
+    x.claimedAt = at;
+    x.seenAt = null;
+    x.expiresAt = addHours(at, ttlHours);
+    x.note = null;
+    x.log = null;
   });
+  return Object.assign(t, { takenOverFrom });
+}
+
+/** Renew `agent`'s claim on `slug` if it holds one. Silent otherwise. */
+export function renewIfHeld(root, slug, agent, ttlHours) {
+  const t = readTasks(root).find((x) => x.slug === slug);
+  if (!t || t.state !== "IN_PROGRESS" || t.agent !== agent || isExpired(t)) return false;
+  claim(root, slug, agent, ttlHours);
+  return true;
+}
+
+/** When the holder was last known to be alive: its latest renewal, or the claim itself. */
+export function lastSeen(task) {
+  return task.seenAt || task.claimedAt;
+}
+
+/**
+ * What an agent should show the user before taking over a live claim.
+ * Evidence, not a verdict: relay cannot tell a dead agent from a busy one.
+ */
+export function claimEvidence(root, task) {
+  const seen = Date.parse(lastSeen(task));
+  const minutes = Number.isFinite(seen) ? Math.max(0, Math.round((Date.now() - seen) / 60000)) : null;
+  const claimed = Date.parse(task.claimedAt);
+  const logs = readHistory(root).filter(
+    (e) =>
+      (e.data.task || e.task) === task.slug &&
+      (e.data.agent || e.agent) === task.agent &&
+      (!Number.isFinite(claimed) || Date.parse(e.data.date) >= claimed),
+  );
+  return {
+    minutesSinceSeen: minutes,
+    logsSinceClaim: logs.map((e) => e.file),
+    ...leftoverWork(root, task.claimedAt),
+  };
+}
+
+/**
+ * Where a previous agent's unlogged work is likely to be. With git, that is
+ * the uncommitted changes. Without git there is nothing to diff, so it is the
+ * files modified since the claim was made — by mtime, which is good enough to
+ * tell the next agent where to look.
+ */
+export function leftoverWork(root, sinceIso) {
+  if (isGitRepo(root)) return { git: true, label: "uncommitted changes", files: dirtyFiles(root) };
+  const since = Date.parse(sinceIso);
+  const files = Number.isFinite(since)
+    ? scanTree(root)
+        .files.filter((f) => f.mtime && f.mtime.getTime() >= since)
+        .sort((a, b) => b.mtime - a.mtime)
+        .map((f) => f.path)
+    : [];
+  return { git: false, label: "files modified since the claim", files };
+}
+
+export function describeFiles(files) {
+  if (!files.length) return "none";
+  return `${files.length} file(s), e.g. ${files.slice(0, 3).join(", ")}`;
+}
+
+function liveClaimMessage(root, task, agent) {
+  const ev = claimEvidence(root, task);
+  const ago = ev.minutesSinceSeen === null ? "unknown" : `${ev.minutesSinceSeen} min ago`;
+  const row = (label, value) => `  ${`${label}:`.padEnd(32)}${value}`;
+  return [
+    `\`${task.slug}\` is claimed by ${task.agent} (expires ${task.expiresAt || "never"}).`,
+    ``,
+    `Evidence — relay cannot tell a stopped agent from a busy one, so show this to the user:`,
+    row("last active", ago),
+    row("logs since the claim", ev.logsSinceClaim.length ? ev.logsSinceClaim.join(", ") : "none"),
+    row(ev.label, describeFiles(ev.files)),
+    ``,
+    `Take it over only if the user asked you to continue this task, or confirms`,
+    `${task.agent} has stopped. Then:`,
+    `  relay claim ${task.slug} --agent ${agent} --force`,
+  ].join("\n");
 }
 
 export function isExpired(task, at = Date.now()) {

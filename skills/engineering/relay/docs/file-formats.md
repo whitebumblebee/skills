@@ -8,10 +8,10 @@ protocol would still work — you would just have to maintain the index yourself
 ├── PROJECT.md      yours; relay never rewrites it
 ├── tasks.md        the authoritative tracker
 ├── history.md      GENERATED — never edit by hand
-├── config.json     claim TTL, gates, tracker aliases
+├── config.json     claim TTL, drift threshold, gates, tracker aliases
 └── history/
-    ├── 0001_cursor_intake.md
-    ├── 0002_warp_migrations.md
+    ├── 0001_relay_bootstrap.md     only when relay was adopted into existing work
+    ├── 0002_cursor_intake.md
     └── 0003_claude_staging-deploy.md
 ```
 
@@ -52,6 +52,7 @@ status: done               # done | partial | blocked
 summary: Deployed staging on its own Neon branch and queue; prod untouched.
 next: Run one full tailoring job on staging to reproduce the work-item race.
 supersedes: []
+git_head: 3f9a1c07be21     # written by `relay log` in a git repository
 migrated_from: history_claude_01.md   # only on migrated logs
 ---
 ```
@@ -67,6 +68,8 @@ migrated_from: history_claude_01.md   # only on migrated logs
 | `summary` | yes | One line. Becomes the index row. |
 | `next` | yes | One line. The single next action. |
 | `supersedes` | no | Sequence numbers this entry corrects. |
+| `git_head` | no | The commit the work was based on. Fallback reference for counting unlogged commits. |
+| `bootstrap` | no | `git` or `code`; marks the adoption bootstrap entry. |
 
 The parser accepts a small YAML subset — `key: scalar` and `key: [a, b]`. That
 is deliberate: front-matter is written by agents and read by a tool, and a small
@@ -123,13 +126,26 @@ The `next:` field, with enough detail to act on.
 The most valuable section is usually the fourth. Work that looks finished but
 rests on an unverified assumption is how agents mislead each other.
 
+### The bootstrap entry
+
+When `relay init` adopts an existing project it writes
+`0001_relay_bootstrap.md` with `agent: relay`, `status: partial` and a
+`bootstrap:` field. Its body opens with **Facts collected at adoption** —
+gathered mechanically from git or the working tree — followed by sections for
+the adopting agent: what the project is, where it stands, half-done work, known
+broken or risky, sources relied on, next.
+
+It is the one history entry meant to be completed in place rather than
+superseded: the agent fills in the sections, replaces the placeholder
+`summary:` and `next:`, and sets `status: done`. See [setup.md](setup.md).
+
 ---
 
 ## `tasks.md`
 
 ```
 - [ ] `slug` — TODO
-- [~] `slug` — IN_PROGRESS — claude — 2026-09-17T13:56:12Z — expires 2026-09-17T17:56:12Z
+- [~] `slug` — IN_PROGRESS — claude — 2026-09-17T13:56:12Z — seen 2026-09-17T14:31:40Z — expires 2026-09-17T15:31:40Z
 - [!] `slug` — BLOCKED — human must add the OAuth redirect URI
 - [x] `slug` — DONE — 0007
 ```
@@ -137,11 +153,15 @@ rests on an unverified assumption is how agents mislead each other.
 | State | Box | Trailing fields |
 | --- | --- | --- |
 | `TODO` | `[ ]` | — |
-| `IN_PROGRESS` | `[~]` | agent, claim time, expiry |
+| `IN_PROGRESS` | `[~]` | agent, claim time, `seen` (last renewal, optional), expiry |
 | `BLOCKED` | `[!]` | reason |
 | `DONE` | `[x]` | log sequence |
 
 Separator is an em dash (`—`); `--` is also accepted.
+
+**Order is priority.** `relay status` names the first `TODO` from the top of
+the file as the next task, so the file order is the plan. The template's
+`Now` / `Next` / `Later` headings are priority buckets; phases work too.
 
 Indented lines under a task are free-form notes and are preserved across
 rewrites. Lines inside fenced code blocks are ignored, so `tasks.md` can
@@ -152,17 +172,19 @@ timestamps and expiry, and refuse to steal a live claim.
 
 ### Claim expiry
 
-Every claim carries a TTL — four hours by default, from
-`config.json:claimTtlHours`.
+Every claim carries a TTL — one hour by default, from
+`config.json:claimTtlHours` — and the holder renews it by re-running
+`relay claim` (or `relay log`) as it works. Each renewal writes a `seen` time.
 
 This exists because agents die mid-task constantly: credits run out, laptops
-close, processes crash. Without expiry, a dead agent's claim blocks the task
-forever, and the next agent either waits indefinitely or takes it with no way to
-know whether that is safe. With expiry, `relay status` and `relay doctor` say
-plainly that the holder is gone.
+close, processes crash — and a dying agent gets no chance to say so. Without
+expiry, a dead agent's claim blocks the task forever. A short TTL plus renewal
+makes the claim itself the signal: renewed means alive, stale means gone, and
+`relay status` and `relay doctor` say so plainly.
 
 Expiry does not auto-release the task. It marks it takeable, and `--force`
-records that a takeover happened.
+records that a takeover happened. A live claim can also be forced when the user
+asks another agent to continue the task.
 
 ---
 
@@ -188,7 +210,8 @@ Yours. relay creates it once and never touches it again. See
 
 ```json
 {
-  "claimTtlHours": 4,
+  "claimTtlHours": 1,
+  "unloggedCommitsWarn": 5,
   "gates": [],
   "trackerAliases": ["todo.md", "build_plan.md", "DEV_READY.md"]
 }
