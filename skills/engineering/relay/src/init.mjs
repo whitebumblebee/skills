@@ -11,7 +11,7 @@ import {
   readHistory,
   write,
 } from "./core.mjs";
-import { ALL_HARNESSES, HARNESSES, isShared, pointer } from "./harnesses.mjs";
+import { ALL_HARNESSES, HARNESSES, harnessFile, isShared, pointer } from "./harnesses.mjs";
 import { writeIndex } from "./history.mjs";
 import { commitCount } from "./git.mjs";
 import {
@@ -134,7 +134,7 @@ export function runInit(root, { harnesses = [], force = false, name, mode } = {}
       // harness, so these get the real skill rather than a pointer to it.
       if (rel.endsWith("skills/relay/SKILL.md")) put(file, skillBody());
       else if (isShared(rel)) merge(file, text);
-      else put(file, text);
+      else put(file, harnessFile(rel, projectName));
     }
   }
 

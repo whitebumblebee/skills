@@ -16,6 +16,7 @@ import {
   readHistoryOrphans,
 } from "./core.mjs";
 import { commitDrift, indexIsCurrent } from "./history.mjs";
+import { sectionText } from "./compact.mjs";
 import { isExpired, readTasks } from "./tasks.mjs";
 import { REQUIRED_FIELDS } from "./history.mjs";
 
@@ -57,6 +58,25 @@ export function runDoctor(root, { strict = false } = {}) {
   const entries = readHistory(root);
   const tasks = readTasks(root);
 
+  /* 1b — the templates were actually filled in */
+  const project = read(p.project);
+  if (project !== null && !sectionText(project, "What this project is")) {
+    add(
+      "warn",
+      "project-unfilled",
+      "PROJECT.md is still the template — \"What this project is\" is empty.",
+      "Fill it in with the user: see docs/setup.md in the relay skill.",
+    );
+  }
+  if (tasks.some((t) => t.slug === "first-task")) {
+    add(
+      "warn",
+      "placeholder-task",
+      "tasks.md still has the template task `first-task`.",
+      "Replace it with the real work, in priority order.",
+    );
+  }
+
   /* 2 — generated index matches the files it is derived from */
   if (fs.existsSync(p.historyDir)) {
     if (!indexIsCurrent(root)) {
@@ -75,7 +95,7 @@ export function runDoctor(root, { strict = false } = {}) {
       "error",
       "unreadable-log",
       `history/${orphan} does not match NNNN_agent_task.md and is excluded from the index.`,
-      "Rename it, or run `relay migrate` if it came from an older layout.",
+      "Rename it to NNNN_agent_task.md, continuing the sequence.",
     );
   }
 
@@ -125,6 +145,15 @@ export function runDoctor(root, { strict = false } = {}) {
             "bootstrap-incomplete",
             `history/${e.file} — relay was adopted but setup was never finished (\`${field}\` is a placeholder).`,
             "An agent must complete adoption: see docs/setup.md in the relay skill.",
+          );
+          break;
+        }
+        if (e.data.compact) {
+          add(
+            "error",
+            "compact-incomplete",
+            `history/${e.file} — a compaction was started but not finished (\`${field}\` is a placeholder).`,
+            "Complete the summary with the user, then run `relay compact --finish`. Or delete the draft.",
           );
           break;
         }

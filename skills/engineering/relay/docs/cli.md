@@ -3,8 +3,8 @@
 Every command is safe to run repeatedly. Nothing in relay commits, pushes,
 deploys, or touches the network.
 
-All commands except `init` and `migrate` require a `.relay/` directory in the
-current directory or a parent.
+All commands except `init` require a `.relay/` directory in the current
+directory or a parent.
 
 ---
 
@@ -46,10 +46,9 @@ most-changed files, manifests and scripts, CI and deploy config, docs, a
 `relay doctor` fails with `bootstrap-incomplete` until an agent finishes setup
 with the user — see [setup.md](setup.md).
 
-No bootstrap is written when legacy `history_<agent>_<NN>.md` files are found
-(run `relay migrate` instead), or when `.relay/` already existed — re-running
-`init` to add a harness never starts generating history. Pass `--mode` to force
-one onto a project set up with an older relay.
+No bootstrap is written when `.relay/` already existed — re-running `init` to
+add a harness never starts generating history. Pass `--mode` to force one onto
+a project set up with an older relay.
 
 ### Existing files
 
@@ -198,8 +197,7 @@ Regenerate `.relay/history.md` from the front-matter of every file in
 relay index
 ```
 
-Run after editing a log's front-matter by hand. `relay log` and
-`relay migrate --apply` do this for you.
+Run after editing a log's front-matter by hand. `relay log` does this for you.
 
 ---
 
@@ -231,6 +229,9 @@ Exit code `0` when clean, `1` when there are errors (or warnings under
 | `incomplete-frontmatter` | error | A required field is missing |
 | `placeholder-left` | error | A template `summary:` or `next:` was never filled in |
 | `bootstrap-incomplete` | error | relay was adopted into an existing project but setup was never finished |
+| `compact-incomplete` | error | A compaction was started and its summary not written |
+| `project-unfilled` | warn | `PROJECT.md` is still the template |
+| `placeholder-task` | warn | `tasks.md` still has the template task `first-task` |
 | `seq-mismatch` | error | Front-matter `seq` disagrees with the filename |
 | `claim-no-ttl` | warn | A claim was hand-written without an expiry |
 | `claim-expired` | error | A claim outlived the agent that made it |
@@ -250,25 +251,44 @@ count. Commits that only touch `.relay/` are bookkeeping and never count. If
 
 ---
 
-## `relay migrate`
+## `relay compact`
 
-Convert legacy `history_<agent>_<NN>.md` files into a single global sequence.
+Fold a finished round of work into one summary entry, so history does not grow
+forever. Agents run it only when the user agrees — usually when `relay status`
+reports that every task is done.
 
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--from <dir>` | `.` | Directory holding the legacy files |
-| `--apply` | — | Perform it; **dry run without this** |
+| Flag | Description |
+| --- | --- |
+| *(none)* | Draft the summary as the newest entry |
+| `--finish` | Replace the round's logs with the completed summary |
+| `--confirm-delete` | With `--finish`: allow it when git cannot restore the deleted logs |
 
 ```bash
-relay migrate --from .skillframework
-relay migrate --from .skillframework --apply
+relay compact                            # 1. draft
+# ... an agent writes the summary with the user ...
+relay compact --finish                   # 2. replace
 ```
 
-Prints the full mapping and labels how each file's date was recovered — from
-your old index, from the file's contents, or from mtime. Verify anything marked
-`mtime (guess)` before trusting the order. Originals are never deleted.
+**Drafting** writes `NNNN_relay_compact.md` with what the CLI can collect: how
+many logs, the dates, which agents, every log's `summary` and `next`, the tasks
+done and those carried over. The narrative — *What is true now*, *What was
+built*, *Decisions and why*, *Still open or risky*, *Moved to PROJECT.md* — is
+left for the agent. `doctor` reports `compact-incomplete` until it is written.
 
-See [migration.md](migration.md).
+It refuses while an agent holds a live claim, or while any log still has a
+placeholder `summary` or `next`. Open tasks are fine; they carry over.
+
+**Finishing** refuses until `summary`, `next` and *What is true now* are
+written. Then it deletes the round's logs, renames the summary to
+`0001_relay_compact.md`, removes `DONE` tasks from `tasks.md`, and regenerates
+the index. The next log is `0002`.
+
+If every deleted log is committed and unchanged, the summary records
+`recover_from:` — the commit that still holds them. Otherwise the deletion is
+permanent, and `--finish` refuses without `--confirm-delete`.
+
+A later compaction replaces the previous summary too; the draft points at it so
+the agent carries forward what is still true.
 
 ---
 

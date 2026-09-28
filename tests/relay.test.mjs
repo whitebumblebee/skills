@@ -34,6 +34,7 @@ import {
 import { readHistory } from "../skills/engineering/relay/src/core.mjs";
 import { runDoctor } from "../skills/engineering/relay/src/doctor.mjs";
 import { planMigration } from "../skills/engineering/relay/src/migrate.mjs";
+import { compactDraft, finishCompact, startCompact } from "../skills/engineering/relay/src/compact.mjs";
 
 const sandbox = () => fs.mkdtempSync(path.join(os.tmpdir(), "relay-test-"));
 
@@ -387,6 +388,31 @@ test("re-running init replaces the block instead of duplicating it", () => {
   assert.equal(text.split(BLOCK_START).length - 1, 1);
 });
 
+test("the Cursor rule declares itself always-on", () => {
+  const root = sandbox();
+  runInit(root, { harnesses: ["cursor"] });
+  const rule = fs.readFileSync(path.join(root, ".cursor", "rules", "relay.mdc"), "utf8");
+  assert.match(rule, /^---\ndescription: .+\nalwaysApply: true\n---\n/);
+  assert.match(rule, /\.relay\/PROJECT\.md/);
+});
+
+test("non-Cursor rule files carry no front-matter", () => {
+  const root = sandbox();
+  runInit(root, { harnesses: ["kiro"] });
+  const rule = fs.readFileSync(path.join(root, ".kiro", "steering", "relay.md"), "utf8");
+  assert.ok(rule.startsWith("## relay"));
+});
+
+test("pointers tell agents where the CLI lives, since it is not on PATH", () => {
+  const root = sandbox();
+  runInit(root, { harnesses: ["codex", "cursor"] });
+  for (const rel of ["AGENTS.md", ".cursor/rules/relay.mdc"]) {
+    const text = fs.readFileSync(path.join(root, rel), "utf8");
+    assert.match(text, /node \.agents\/skills\/relay\/bin\/relay\.mjs/, rel);
+    assert.match(text, /node ~\/\.agents\/skills\/relay\/bin\/relay\.mjs/, rel);
+  }
+});
+
 test("relay-owned files are still left alone without --force", () => {
   const root = sandbox();
   fs.mkdirSync(path.join(root, ".cursor", "rules"), { recursive: true });
@@ -525,4 +551,157 @@ test("doctor warns about unlogged commits past the configured threshold", () => 
     commitAll(root, `work ${i}`);
   }
   assert.ok(runDoctor(root).findings.some((f) => f.code === "unlogged-commits"));
+});
+
+/* ----------------------------------------------------- doctor: templates */
+
+test("doctor warns while PROJECT.md and tasks.md are still the templates", () => {
+  const root = project();
+  const codes = runDoctor(root).findings.map((f) => f.code);
+  assert.ok(codes.includes("project-unfilled"));
+  assert.ok(codes.includes("placeholder-task"));
+
+  const file = path.join(root, ".relay", "PROJECT.md");
+  fs.writeFileSync(
+    file,
+    fs.readFileSync(file, "utf8").replace("## What this project is\n", "## What this project is\n\nA shop.\n"),
+  );
+  replaceFirstTask(root, "- [ ] `login` — TODO");
+  const after = runDoctor(root).findings.map((f) => f.code);
+  assert.ok(!after.includes("project-unfilled"));
+  assert.ok(!after.includes("placeholder-task"));
+});
+
+/* --------------------------------------------------------------- compact */
+
+function replaceFirstTask(root, lines) {
+  const file = path.join(root, ".relay", "tasks.md");
+  fs.writeFileSync(
+    file,
+    fs
+      .readFileSync(file, "utf8")
+      .replace(/- \[ \] `first-task` — TODO\n  - Replace this[^\n]*\n/, `${lines}\n`),
+  );
+}
+
+/** A project with two finished tasks, each with a log. */
+function finishedRound(root = project()) {
+  replaceFirstTask(root, "- [ ] `login` — TODO\n  - email and password\n- [ ] `cart` — TODO");
+  for (const t of ["login", "cart"]) {
+    createLog(root, { agent: "claude", task: t, summary: `built ${t}`, next: `after ${t}` });
+    updateTask(root, t, (x) => {
+      x.state = "DONE";
+      x.log = String(readHistory(root).at(-1).seq).padStart(4, "0");
+    });
+  }
+  writeIndex(root);
+  return root;
+}
+
+/** Fill in the parts of the draft an agent must write. */
+function completeDraft(root) {
+  const draft = compactDraft(readHistory(root));
+  const text = fs
+    .readFileSync(draft.path, "utf8")
+    .replace(/^summary: .*$/m, "summary: Login and cart work.")
+    .replace(/^next: .*$/m, "next: Start checkout.")
+    .replace("## What is true now\n", "## What is true now\n\nLogin and cart exist.\n");
+  fs.writeFileSync(draft.path, text);
+}
+
+test("compact drafts a summary with the round's facts, and doctor rejects it until complete", () => {
+  const root = finishedRound();
+  const res = startCompact(root);
+  assert.equal(res.file, "0003_relay_compact.md");
+  const text = fs.readFileSync(path.join(root, ".relay", "history", res.file), "utf8");
+  assert.match(text, /compact: true/);
+  assert.match(text, /^logs: 2$/m);
+  assert.match(text, /built login/);
+  assert.match(text, /Tasks done: `login`, `cart`/);
+  assert.ok(runDoctor(root).findings.some((f) => f.code === "compact-incomplete"));
+  assert.throws(() => startCompact(root), /draft already exists/);
+});
+
+test("compact refuses while a live claim is held, or a log is unfinished", () => {
+  const root = finishedRound();
+  fs.appendFileSync(path.join(root, ".relay", "tasks.md"), "\n- [ ] `checkout` — TODO\n");
+  claim(root, "checkout", "cursor", 1);
+  assert.throws(() => startCompact(root), /work is claimed/);
+
+  const other = finishedRound();
+  createLog(other, { agent: "cursor", task: "x" });
+  assert.throws(() => startCompact(other), /still a placeholder/);
+});
+
+test("finish refuses an incomplete draft", () => {
+  const root = finishedRound();
+  startCompact(root);
+  assert.throws(() => finishCompact(root, { confirmDelete: true }), /not finished/);
+});
+
+test("without git, finish needs explicit confirmation to delete", () => {
+  const root = finishedRound();
+  startCompact(root);
+  completeDraft(root);
+  assert.throws(() => finishCompact(root), /no git repository/);
+  const res = finishCompact(root, { confirmDelete: true });
+  assert.equal(res.deleted, 2);
+  assert.equal(res.recoverFrom, null);
+});
+
+test("finish replaces the round with summary 0001, drops DONE tasks, and the next log is 0002", () => {
+  const root = finishedRound();
+  fs.appendFileSync(path.join(root, ".relay", "tasks.md"), "\n- [!] `deploy` — BLOCKED — waiting on DNS\n");
+  startCompact(root);
+  completeDraft(root);
+  const res = finishCompact(root, { confirmDelete: true });
+  assert.deepEqual(res.removedTasks, ["login", "cart"]);
+
+  const files = fs.readdirSync(path.join(root, ".relay", "history"));
+  assert.deepEqual(files, ["0001_relay_compact.md"]);
+  const tasks = fs.readFileSync(path.join(root, ".relay", "tasks.md"), "utf8");
+  assert.ok(!tasks.includes("`login`"));
+  assert.ok(!tasks.includes("email and password"), "a DONE task's notes go with it");
+  assert.ok(tasks.includes("`deploy`"), "open tasks carry over");
+
+  const next = createLog(root, { agent: "cursor", task: "deploy", summary: "s", next: "n" });
+  assert.equal(next.seq, 2);
+  writeIndex(root);
+  assert.equal(runDoctor(root).counts.error, 0, JSON.stringify(runDoctor(root).findings));
+});
+
+test("with committed logs, finish needs no confirmation and records where to restore them", () => {
+  const root = repo(2);
+  runInit(root, { mode: "new" });
+  finishedRound(root);
+  commitAll(root, "round one");
+  startCompact(root);
+  completeDraft(root);
+  const res = finishCompact(root);
+  assert.ok(res.recoverFrom);
+  const summary = fs.readFileSync(path.join(root, ".relay", "history", "0001_relay_compact.md"), "utf8");
+  assert.match(summary, new RegExp(`^recover_from: "?${res.recoverFrom}"?$`, "m"));
+  const restored = execFileSync("git", ["show", `${res.recoverFrom}:.relay/history/0001_claude_login.md`], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  assert.match(restored, /built login/);
+});
+
+test("a second round folds in the first round's summary", () => {
+  const root = finishedRound();
+  startCompact(root);
+  completeDraft(root);
+  finishCompact(root, { confirmDelete: true });
+  assert.throws(() => startCompact(root), /Nothing to compact/);
+
+  fs.appendFileSync(path.join(root, ".relay", "tasks.md"), "\n- [ ] `checkout` — TODO\n");
+  createLog(root, { agent: "cursor", task: "checkout", summary: "built checkout", next: "ship" });
+  const res = startCompact(root);
+  const text = fs.readFileSync(path.join(root, ".relay", "history", res.file), "utf8");
+  assert.match(text, /^round: 2$/m);
+  assert.match(text, /Earlier rounds: summarised in `0001_relay_compact\.md`/);
+  completeDraft(root);
+  finishCompact(root, { confirmDelete: true });
+  assert.deepEqual(fs.readdirSync(path.join(root, ".relay", "history")), ["0001_relay_compact.md"]);
 });

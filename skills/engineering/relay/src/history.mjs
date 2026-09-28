@@ -1,16 +1,11 @@
 /**
  * The history index is GENERATED, never hand-maintained.
  *
- * This is the central design decision in relay. In the two real projects this
- * framework grew out of, the hand-written index drifted immediately — one of
- * 49 entries missing in the first, eighteen of 22 missing in the second. The
- * index was the only place global ordering lived, so the artifact a fresh agent
- * needs most was the one that rotted first.
- *
- * relay fixes that structurally rather than by asking for more discipline:
- * ordering lives in the filename, metadata lives in each file's front-matter,
- * and `relay index` derives the index from both. Drift becomes impossible
- * instead of merely discouraged.
+ * A hand-kept index falls out of date the first time a session ends before
+ * updating it, and it is the file a fresh agent trusts most. So ordering lives
+ * in the filename, metadata lives in each file's front-matter, and
+ * `relay index` derives the index from both. Drift becomes impossible instead
+ * of merely discouraged.
  */
 import {
   UserError,

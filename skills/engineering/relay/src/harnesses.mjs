@@ -3,9 +3,8 @@
  *
  * Every entry here resolves to the same tiny pointer file. That is the point:
  * the protocol lives in exactly one place (`.relay/`), and each harness gets a
- * stub telling it where to look. The alternative — a full copy of the rules per
- * harness — is what produced five drifting copies of the same document in the
- * projects this came from.
+ * stub telling it where to look. A full copy of the rules per harness would
+ * drift apart as soon as one copy was edited.
  *
  * `confidence: "verified"` means the path is the harness's documented
  * convention. `"agents-md"` means the harness reads the cross-tool AGENTS.md
@@ -152,6 +151,16 @@ losing context. Several agents, in different tools, with separate context
 windows and credit limits, work on this repository. Chat transcripts are not
 shared memory. The files under \`.relay/\` are.
 
+**Running relay.** The CLI ships inside the relay skill and is usually not on
+\`PATH\`. Use the first of these that works — commands below are written as
+plain \`relay\`:
+
+1. \`relay\`
+2. \`node .agents/skills/relay/bin/relay.mjs\`
+3. \`node ~/.agents/skills/relay/bin/relay.mjs\`
+
+If none work, follow the same rules by editing the \`.relay/\` files by hand.
+
 **If \`.relay/history/0001_relay_bootstrap.md\` still has \`TODO:\` in its
 \`summary:\` or \`next:\`, relay setup is unfinished — finish it with the user
 first, following \`docs/setup.md\` in the relay skill.**
@@ -182,4 +191,20 @@ was true when it was written; it does not override the current repository.
 Run \`relay status\` to see where things stand, and \`relay doctor\` before you
 hand off. Full protocol: \`.relay/PROJECT.md\` and the relay README.
 `;
+}
+
+/**
+ * The contents of a relay-owned harness file. Cursor treats an `.mdc` rule
+ * without front-matter as manual — loaded only when @-mentioned — so the rule
+ * declares itself always-on.
+ */
+export function harnessFile(rel, projectName) {
+  const text = pointer(projectName);
+  if (!rel.endsWith(".mdc")) return text;
+  return `---
+description: relay handoff protocol — read .relay/ before any work, claim one task, log before handing off
+alwaysApply: true
+---
+
+${text}`;
 }

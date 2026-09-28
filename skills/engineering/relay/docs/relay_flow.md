@@ -37,7 +37,7 @@ Once per project, run `npx skills add whitebumblebee/skills`, or add `--global` 
    - `0001_relay_bootstrap.md`, filled with facts from git: date range, contributors, recent commits, most-changed files, tags, scripts, CI and deploy config, and any `CHANGELOG` timeline
    - a marked relay section added to your existing `AGENTS.md` / `CLAUDE.md`, with your own text untouched
 
-   If you have old `history_<agent>_<NN>.md` files, it writes no bootstrap entry and tells you to run `relay migrate` first.
+   If the project already has its own notes, such as handoff files, plans or a changelog, the agent reads them in step 3 and cites them in the bootstrap entry.
 
 2. **Setup is now blocked until it's finished.** `relay status` shows "Setup is not finished", and `relay doctor` fails with `bootstrap-incomplete`. The pointer files carry the same warning, so an agent opened in a different tool also knows to finish setup first.
 3. **The agent investigates before asking you anything.** It reads the bootstrap facts, then goes further: `git log --stat`, the most-changed files, branches, uncommitted changes, README, docs, `CHANGELOG`, your existing agent instructions, and the code itself.
@@ -123,6 +123,14 @@ After setup, this is the same in all three scenarios, for every session in every
 
 The only exception is work that blocks its current task. It can do that inside the task, and says so in its log.
 
+**11. Every task is done.** `relay status` says so, and the agent asks whether to compact this round. If you agree:
+
+- `relay compact` drafts one summary with the facts: every log's summary and `next`, the tasks done, dates, agents.
+- The agent reads the round's logs and writes the summary with you. It opens with a short "What is true now", which every future agent reads. Anything that stays true, like rules and constraints, moves into `PROJECT.md`.
+- `relay compact --finish` deletes the round's logs, makes the summary `0001`, and removes finished tasks. The next round starts at `0002`.
+
+In a git project whose logs are committed, the deleted logs can be restored from the commit the summary records. Without git the deletion is permanent, so it asks you to confirm. You can ask for a compaction at any time; open tasks carry over, and only a task someone is actively working on blocks it.
+
 ## What still differs between scenarios after setup
 
 |                                                    | Empty                                  | Git history                 | No git                                         |
@@ -130,5 +138,6 @@ The only exception is work that blocks its current task. It can do that inside t
 | History starts at                                  | nothing; first task is `0001`          | `0001` bootstrap            | `0001` bootstrap                               |
 | Commits without a log                              | tracked once the project has git       | tracked                     | off until you `git init`                       |
 | After a takeover, the agent finds leftover work by | git's diff, or the listed files if no git | `git status` and `git diff` | reading the files relay lists as modified since the claim |
+| Logs deleted by compaction | restorable once the project has git and the logs are committed | restorable if committed | permanent; you confirm first |
 
 Without git, "modified since the claim" comes from file modification times. It's good enough to show where to look, but an edit made by something else in that window, such as you or a formatter, shows up too, so the agent still reads before trusting it.

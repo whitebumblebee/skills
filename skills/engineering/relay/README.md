@@ -8,70 +8,78 @@ same conclusions, makes a decision the previous agent already rejected for a
 good reason, and quietly breaks something. Two days later you switch to Codex
 and pay for all of it again.
 
-relay is a small protocol plus a CLI that fixes this. It gives every project a
-`.relay/` directory that any agent, in any tool, can read in sixty seconds to
-know exactly where things stand — and a discipline for leaving it that way.
+relay gives every project a shared memory that lives in the repository, not in
+any one tool. A `.relay/` folder that any agent, in any tool, reads at the
+start of a session and writes to before it stops. Plus a small CLI that keeps
+that folder in order.
 
 ```bash
 npx skills@latest add whitebumblebee/skills@relay
-node .agents/skills/relay/bin/relay.mjs init --all
 ```
+
+Then tell your agent: **"set up relay for this project."**
 
 ---
 
-## The problem this actually solves
+## Why agents need this
 
-Most "agent handoff" setups are a `todo.md` and a folder of history files. That
-works for about two weeks. Then:
+Coding agents are good at picking up work from a clear written note. What they
+do not have is somewhere to find that note:
 
-- **Ordering is lost.** `history_cursor_28.md` and `history_warp_02.md` — which
-  came first? The filenames only sequence *within* one agent. Global order
-  lives in a hand-written index.
-- **The index rots.** Because it is maintained by hand, it drifts. In the two
-  projects relay was extracted from, one index was missing 1 of 49 entries; the
-  other was missing **18 of 22**. The artifact a new agent needs most was the
-  first to become unreliable.
-- **Claims never expire.** An agent claims a task, runs out of credits, and
-  vanishes. The claim sits there for weeks. Every later agent either blocks on
-  it forever or takes it unsafely.
-- **Trackers multiply.** `todo.md`, `build_plan.md`, `plan_high.md`,
-  `project-handoff.md`, `DEV_READY.md` — five documents, no declared
-  precedence, and the newest agent guesses wrong.
-- **The rules get copied per harness.** `CLAUDE.md`, `AGENTS.md`, `WARP.md`,
-  `.cursor/rules/`, `.kiro/steering/` each hold a full copy that drifts apart.
-- **Nothing is checkable.** No command tells you the handoff surface is broken,
-  so you find out when an agent acts on stale information.
+- **Every session starts from zero.** The chat that explains what happened
+  lives in one tool. Switch tools, or open a new session, and it is gone.
+- **Decisions get relitigated.** Without a record of *why* something was done,
+  the next agent re-derives it — or undoes it.
+- **Work dies mid-task.** Credits run out and the session ends, and the
+  half-finished work has no explanation attached.
+- **Agents collide.** Two agents running at once can pick the same task.
+- **Nothing tells you it's stale.** A handoff note can be missing, outdated or
+  half-written, and you find out when an agent acts on it.
 
-relay's answer to all six is structural, not motivational.
+## What relay gives you
+
+A `.relay/` folder with four parts, and the rules for keeping it current:
+
+- **`PROJECT.md` — what is true.** Architecture you must not break, the checks
+  that must pass, what needs a human, what was deliberately postponed.
+- **`tasks.md` — what is being done.** One list, in priority order. Each task
+  has at most one owner at a time.
+- **`history/` — what happened.** One short log per session, numbered in a
+  single sequence across every agent and tool, each ending with the one thing
+  the next agent should do.
+- **`relay doctor` — proof it's intact.** One command that checks all of it.
 
 ## How it works
 
-**Ordering lives in the filename.** Logs are `0001_cursor_intake.md`,
-`0002_warp_migrations.md`, `0003_claude_deploy.md` — a single global sequence
-across every agent and every tool. `ls` alone tells you the order.
+**Order lives in the filename.** Logs are `0001_cursor_intake.md`,
+`0002_warp_migrations.md`, `0003_claude_deploy.md`. `ls` alone tells you what
+happened, in order, across every tool.
 
-**The index is generated.** `.relay/history.md` is built from the front-matter
-of the log files by `relay index`. Hand-editing it is pointless, and drift
-becomes impossible rather than merely discouraged.
+**Every log ends with `next:`.** The single action the next agent should take.
+It is the most valuable line in the file, so it is mandatory.
 
-**Claims expire.** `relay claim` stamps a short TTL that the working agent
-keeps renewing. A claim that stops being renewed means its agent is gone;
-`relay doctor` reports it, and `--force` documents the takeover. Asking an agent
-to continue another's task counts as reassigning it.
+**The index is generated.** `.relay/history.md` summarises every log, and it is
+built from the logs themselves, so it can never fall out of date.
 
-**Works on projects that already exist.** `relay init` recognises an empty
-project, one with git history, and one with code but no git — and in the last
-two writes a bootstrap history entry so agents do not start from nothing. Your
-agent then interviews you to fill in the rest.
+**Tasks have owners.** An agent claims a task before working on it. Claims
+expire unless renewed, so a task held by an agent whose session died becomes
+free again. Asking an agent to continue another's task hands it over.
 
-**One tracker.** `.relay/tasks.md` is authoritative. Plans are subordinate to
-it, and `doctor` warns when a competing tracker appears at the project root.
+**It starts where your project is.** `relay init` recognises an empty project,
+one with git history, and one with code but no git. For existing projects it
+writes a first history entry from what it finds, and your agent interviews you
+to fill in the rest.
 
-**One copy of the rules.** Each harness gets a short pointer file. The protocol
-lives in `.relay/` only.
+**One set of rules, every tool.** relay adds a short section to `AGENTS.md`,
+`CLAUDE.md` and each tool's rules file, pointing at `.relay/`. The rules live in
+one place.
 
-**`relay doctor` verifies all of it** in one command, and exits non-zero — so it
-works in CI or as a pre-handoff gate.
+**It stays small.** When every task is done, the agent asks whether to compact
+the round. `relay compact` folds its logs into one summary, which becomes the
+starting point of the next round.
+
+**It is checkable.** `relay doctor` exits non-zero when something is wrong, so
+it works before a handoff and in CI.
 
 ## Quick start
 
@@ -137,6 +145,13 @@ relay done api-pagination                      # cites the log automatically
 relay doctor                                   # must pass before handing off
 ```
 
+When every task is done, and you agree:
+
+```bash
+relay compact            # draft one summary of the round
+relay compact --finish   # replace the round's logs with it
+```
+
 Blocked instead of finished:
 
 ```bash
@@ -187,21 +202,6 @@ relay harness zed cline    # add pointers for more later
 
 See [docs/harnesses.md](docs/harnesses.md) for per-tool setup.
 
-## Migrating an existing project
-
-If you already have `history_<agent>_<NN>.md` files, relay can renumber them
-into a single global sequence, recovering order from your old index, then from
-dates inside the files, then from mtime — telling you which is which.
-
-```bash
-relay migrate --from .            # dry run; prints the full mapping
-relay migrate --from . --apply    # after you have read it
-```
-
-**Read the dry run before applying.** Order recovered from mtime is a guess and
-only you can confirm it. Nothing is deleted. Full guide:
-[docs/migration.md](docs/migration.md).
-
 ## Documentation
 
 | | |
@@ -212,7 +212,6 @@ only you can confirm it. Nothing is deleted. Full guide:
 | [Harnesses](docs/harnesses.md) | Setup for every supported tool |
 | [CLI reference](docs/cli.md) | Every command, every flag |
 | [File formats](docs/file-formats.md) | Front-matter schema, task states, naming |
-| [Migration](docs/migration.md) | Moving an existing project onto relay |
 | [Design notes](docs/design.md) | Why it works this way |
 
 ## Requirements

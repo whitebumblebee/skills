@@ -105,6 +105,30 @@ export function formatTaskLine(task) {
   return line;
 }
 
+/**
+ * Remove every DONE task, with its indented notes. Compaction uses this: the
+ * logs a DONE task cites are about to be deleted, and the summary records them.
+ */
+export function removeDone(root) {
+  const p = paths(root).tasks;
+  const text = read(p);
+  if (text === null) return [];
+  const done = readTasks(root).filter((t) => t.state === "DONE");
+  if (!done.length) return [];
+  const lines = text.split(/\r?\n/);
+  const drop = new Set();
+  for (const t of done) {
+    drop.add(t.lineNo);
+    for (let i = t.lineNo + 1; i < lines.length; i += 1) {
+      const indent = /^(\s*)/.exec(lines[i])[1].length;
+      if (!lines[i].trim() || indent <= t.indent.length) break;
+      drop.add(i);
+    }
+  }
+  write(p, lines.filter((_, i) => !drop.has(i)).join("\n"));
+  return done.map((t) => t.slug);
+}
+
 export function updateTask(root, slug, mutate) {
   const p = paths(root).tasks;
   const text = read(p);

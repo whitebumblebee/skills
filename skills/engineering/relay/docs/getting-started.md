@@ -203,6 +203,18 @@ again. If it cannot ask, it adds the task at the bottom marked
 `priority not confirmed` and mentions it in its log. The same happens when
 every task is done and the agent proposes what comes next.
 
+## Finishing a round: compaction
+
+History grows by one file per session. When every task in `tasks.md` is done,
+the agent asks whether to compact the round. Say yes and it drafts one summary
+with `relay compact`, writes it with you, and runs `relay compact --finish`.
+The round's logs are replaced by `0001_relay_compact.md`, finished tasks are
+cleared, and the next round starts from that summary — the same way `relay init`
+starts an existing project from a first entry.
+
+If `.relay/` is committed, the deleted logs stay in git and the summary records
+the commit. Without git, they are gone for good, and relay asks you to confirm.
+
 ## Working in parallel
 
 Two agents can work at once if each holds a distinct task and their file scopes
@@ -232,4 +244,3 @@ reach anyone else. `unlogged-commits` needs the full history, so check out with
 - [CLI reference](cli.md) — every command and flag
 - [File formats](file-formats.md) — front-matter schema and task states
 - [Harnesses](harnesses.md) — per-tool setup
-- [Migration](migration.md) — bringing an existing project onto relay

@@ -62,6 +62,17 @@ export function commitsSince(root, rev) {
   return out === null ? null : Number(out) || 0;
 }
 
+/**
+ * The commit from which `rels` can be restored exactly, or null. True only when
+ * every file is tracked and has no uncommitted changes — then HEAD holds them.
+ */
+export function recoverableFrom(root, rels) {
+  if (!rels.length || !isGitRepo(root)) return null;
+  if (git(root, ["ls-files", "--error-unmatch", "--", ...rels]) === null) return null;
+  if (git(root, ["status", "--porcelain", "--", ...rels])) return null;
+  return head(root);
+}
+
 /** The newest commit that changed `rel`, or null if it was never committed. */
 export function lastCommitTouching(root, rel) {
   return git(root, ["log", "-1", "--format=%H", "--", rel]) || null;

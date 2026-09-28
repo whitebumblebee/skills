@@ -51,7 +51,9 @@ Read, in this order:
 1. `.relay/PROJECT.md` — architecture, invariants, gates, what needs the human
 2. `.relay/tasks.md` — the authoritative tracker
 3. `.relay/history.md` — generated index of every prior session
-4. The newest `.relay/history/NNNN_*.md` entries relevant to your task
+4. `0001_relay_compact.md`, if present — "What is true now" summarises every
+   earlier round of work
+5. The newest `.relay/history/NNNN_*.md` entries relevant to your task
 
 Then run `relay status`, which summarises all of it and names the next
 unblocked task.
@@ -167,6 +169,24 @@ relay block <task> --reason "exactly what is needed, and by whom"
 Keep the task open and record the blocker type, the exact non-secret error,
 what you already tried, and whether retrying is safe.
 
+## When every task is done — compaction
+
+When `relay status` says every task is done, **ask the user whether to compact
+this round** into one summary. Never compact without asking. If they agree:
+
+1. `relay compact` drafts `.relay/history/NNNN_relay_compact.md` with the
+   facts: every log's summary and `next:`, tasks done, dates, agents.
+2. Read the round's logs and write the summary with the user. Keep "What is
+   true now" short — every future agent reads it. Move anything that stays
+   true, such as rules and constraints, into `PROJECT.md`.
+3. `relay compact --finish` deletes the round's logs, makes the summary
+   `0001`, and removes finished tasks. If git cannot restore the logs it
+   refuses; tell the user the deletion is permanent, and only with their
+   agreement run `relay compact --finish --confirm-delete`.
+
+The user can ask for a compaction at any time. Open tasks carry over; a task
+someone is actively working on blocks it.
+
 ## When the human has to do it
 
 Some things an agent cannot or must not do alone: OAuth consent screens,
@@ -193,8 +213,8 @@ Plans and design documents are subordinate to `tasks.md`.
 
 `.relay/history.md` is generated from the front-matter of the files in
 `.relay/history/`. Hand-editing it is pointless — the next `relay index`
-overwrites it — and a hand-maintained index is exactly what rotted in the
-framework relay replaced, until most entries were missing from it.
+overwrites it — and an index kept by hand falls out of date the first time a
+session ends before updating it.
 
 Change the log file, then run `relay index`.
 
@@ -210,6 +230,7 @@ Change the log file, then run `relay index`.
 | `relay done <t>` | Mark done, citing your log |
 | `relay index` | Regenerate `history.md` |
 | `relay doctor` | Verify everything; run before every handoff |
+| `relay compact [--finish]` | Fold a finished round of logs into one summary — only when the user agrees |
 
 Every flag is in `docs/cli.md`, next to this file. `relay help` prints the same
 summary. No relay command commits, pushes, deploys, or touches the network.

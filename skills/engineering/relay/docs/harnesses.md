@@ -3,10 +3,10 @@
 relay is deliberately harness-agnostic. The protocol lives in `.relay/`, and
 each tool gets a short **pointer file** telling it to read that directory.
 
-This is the opposite of the usual approach, where every tool gets its own full
-copy of the rules. Copies drift. In the project relay came from, the same
-document existed five times — as `CLAUDE.md`, `AGENTS.md`, `WARP.md`, a Cursor
-skill and a Kiro steering file — and they had already diverged.
+This is the opposite of giving every tool its own full copy of the rules. Five
+tools means five copies — `CLAUDE.md`, `AGENTS.md`, `WARP.md`, a Cursor rule, a
+Kiro steering file — and copies drift apart. A pointer only says where to look,
+so it never needs updating when the rules change.
 
 ```bash
 relay harness                        # list every known harness
@@ -70,13 +70,16 @@ Files: `AGENTS.md`, `.cursor/rules/relay.mdc`
 relay init --harness cursor
 ```
 
-Cursor reads `AGENTS.md` and every rule in `.cursor/rules/`. To make the rule
-always-on rather than agent-requested, add front-matter to `relay.mdc`:
+Cursor reads `AGENTS.md` and every rule in `.cursor/rules/`. relay writes
+`relay.mdc` with `alwaysApply: true` front-matter, so the rule loads in every
+chat. Without front-matter Cursor treats a rule as manual and only loads it
+when you @-mention it.
 
-```markdown
----
-alwaysApply: true
----
+If you set relay up before this was added, regenerate the rule:
+
+```bash
+rm .cursor/rules/relay.mdc
+relay harness cursor
 ```
 
 ## OpenAI Codex — verified

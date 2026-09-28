@@ -32,6 +32,7 @@ import {
   updateTask,
 } from "../src/tasks.mjs";
 import { runDoctor } from "../src/doctor.mjs";
+import { compactDraft, finishCompact, startCompact } from "../src/compact.mjs";
 import { applyMigration, planMigration } from "../src/migrate.mjs";
 import { ALL_HARNESSES, HARNESSES } from "../src/harnesses.mjs";
 
@@ -125,6 +126,15 @@ function cmdStatus() {
     console.log(`${C.yellow}${C.bold}Setup is not finished${C.off}`);
     console.log(`  ${setup.file} still has placeholder fields. Complete adoption before other work —`);
     console.log(`  ${C.dim}see docs/setup.md in the relay skill.${C.off}\n`);
+  }
+
+  const draft = compactDraft(entries);
+  if (draft) {
+    console.log(`${C.yellow}${C.bold}Compaction in progress${C.off}`);
+    console.log(`  Complete ${draft.file} with the user, then: relay compact --finish\n`);
+  } else if (tasks.length && tasks.every((t) => t.state === "DONE") && entries.some((e) => !e.data.compact)) {
+    console.log(`${C.green}${C.bold}Every task is done${C.off}`);
+    console.log(`  Ask the user whether to compact this round into one summary: relay compact\n`);
   }
 
   const active = tasks.filter((t) => t.state === "IN_PROGRESS");
@@ -257,6 +267,27 @@ function cmdDone({ positional, flags }) {
   console.log(`${C.green}Done${C.off} \`${slug}\` — log ${String(n).padStart(4, "0")}`);
 }
 
+function cmdCompact({ flags }) {
+  const root = requireRoot();
+  if (!flags.finish) {
+    const res = startCompact(root);
+    console.log(`${C.green}Drafted${C.off} .relay/history/${res.file} ${C.dim}(covers ${res.covers} log(s))${C.off}\n`);
+    console.log(`Fill it in with the user — "What is true now" first, then the record.`);
+    console.log(`Move lasting rules into PROJECT.md. Then: relay compact --finish`);
+    return 0;
+  }
+  const res = finishCompact(root, { confirmDelete: Boolean(flags["confirm-delete"]) });
+  console.log(`${C.green}Compacted${C.off} ${res.deleted} log(s) into .relay/history/${res.file}`);
+  if (res.removedTasks.length) console.log(`  Removed finished tasks: ${res.removedTasks.map((s) => `\`${s}\``).join(", ")}`);
+  console.log(
+    res.recoverFrom
+      ? `  ${C.dim}The deleted logs can be restored from commit ${res.recoverFrom}.${C.off}`
+      : `  ${C.dim}The deleted logs are gone; the summary is the record.${C.off}`,
+  );
+  console.log(`\nThe next log will be 0002.`);
+  return 0;
+}
+
 function cmdIndex() {
   const root = requireRoot();
   writeIndex(root);
@@ -360,8 +391,9 @@ DAILY USE
 INTEGRITY
   index                        Regenerate history.md from .relay/history/
   doctor [--strict]            Check everything; exit 1 on errors
-  migrate --from <dir>         Plan a legacy history_<agent>_<NN>.md migration
-    --apply                      Actually perform it (dry run by default)
+  compact                      Draft one summary of this round's logs
+    --finish                     Replace the round's logs with the summary
+    --confirm-delete             Allow it when git cannot restore the logs
 
   version, help
 
@@ -376,6 +408,7 @@ const COMMANDS = {
   log: cmdLog,
   done: cmdDone,
   index: cmdIndex,
+  compact: cmdCompact,
   doctor: cmdDoctor,
   migrate: cmdMigrate,
   harness: cmdHarness,

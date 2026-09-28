@@ -30,12 +30,11 @@ NNNN_<agent>_<task>.md
 | `<agent>` | Lowercase harness name, kebab-case. Be consistent — `claude`, not `Claude` one day and `claude-code` the next. |
 | `<task>` | The task slug from `tasks.md`, kebab-case. |
 
-**Why the sequence is in the filename.** This is the core fix relay makes over
-the `history_<agent>_<NN>.md` convention it replaces. Per-agent numbering tells
-you nothing about global order: given `history_cursor_28.md` and
-`history_warp_02.md`, you cannot say which came first without consulting an
-index — and that index is hand-maintained, so it drifts. Putting the sequence in
-the filename makes ordering a property of the filesystem. `ls` is enough.
+**Why the sequence is in the filename.** Several agents in several tools write
+to the same history. Numbering per agent (`cursor_03`, `warp_01`) would say
+nothing about which came first, and a separate index would be one more file to
+keep in sync. With one global sequence in the filename, ordering is a property
+of the filesystem. `ls` is enough.
 
 ---
 
@@ -53,7 +52,6 @@ summary: Deployed staging on its own Neon branch and queue; prod untouched.
 next: Run one full tailoring job on staging to reproduce the work-item race.
 supersedes: []
 git_head: 3f9a1c07be21     # written by `relay log` in a git repository
-migrated_from: history_claude_01.md   # only on migrated logs
 ---
 ```
 
@@ -69,6 +67,7 @@ migrated_from: history_claude_01.md   # only on migrated logs
 | `next` | yes | One line. The single next action. |
 | `supersedes` | no | Sequence numbers this entry corrects. |
 | `git_head` | no | The commit the work was based on. Fallback reference for counting unlogged commits. |
+| `compact` | no | `true` on a compaction summary. With it: `round`, `logs` (how many it replaced), `period`, and `recover_from` (the commit that still holds them, when there is one). |
 | `bootstrap` | no | `git` or `code`; marks the adoption bootstrap entry. |
 
 The parser accepts a small YAML subset — `key: scalar` and `key: [a, b]`. That
@@ -135,9 +134,19 @@ gathered mechanically from git or the working tree — followed by sections for
 the adopting agent: what the project is, where it stands, half-done work, known
 broken or risky, sources relied on, next.
 
-It is the one history entry meant to be completed in place rather than
+It is one of two history entries meant to be completed in place rather than
 superseded: the agent fills in the sections, replaces the placeholder
 `summary:` and `next:`, and sets `status: done`. See [setup.md](setup.md).
+
+### The compaction summary
+
+`relay compact` drafts `NNNN_relay_compact.md`; `relay compact --finish`
+replaces every earlier entry with it and renames it `0001_relay_compact.md`.
+It opens with **What is true now**, kept short because every arriving agent
+reads it, followed by the record — what was built, decisions and why, what is
+still open or risky, what moved to `PROJECT.md` — and then **Facts collected at
+compaction**, including a table of every log it replaced. See
+[cli.md](cli.md#relay-compact).
 
 ---
 

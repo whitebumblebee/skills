@@ -6,3 +6,4 @@ node_modules/
 # unrelated private projects. Remove this line if you decide to publish it.
 claude_session.md
 transcript.jsonl
+personal_docs/

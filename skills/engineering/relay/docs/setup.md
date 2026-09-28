@@ -25,10 +25,11 @@ with `--mode new|git|code`.
 | **git** | Existing work with git history | `0001_relay_bootstrap.md`, facts from git |
 | **code** | Existing work, no usable git history | `0001_relay_bootstrap.md`, facts from the files |
 
-If `init` reports **legacy `history_<agent>_<NN>.md` files**, stop and run
-`relay migrate` first (dry run, show the user, then `--apply`). Those logs are
-real history and must be migrated, not summarised. See
-[migration.md](migration.md).
+If the project already keeps its own notes — handoff files, session logs,
+plans, a changelog, a to-do list — they are the best history it has. Read them,
+cite them under *Sources relied on* in the bootstrap entry, and port live
+to-do items into `tasks.md`. Leave the originals in place unless the user asks
+you to archive or remove them.
 
 If `AGENTS.md`, `CLAUDE.md` or similar already existed, `init` added a marked
 `<!-- relay:start -->` block and left the user's content alone. Do not delete
