@@ -1,5 +1,14 @@
 # whitebumblebee-skills
 
+## 0.2.1
+
+### Patch Changes
+
+- [`109e8a3`](https://github.com/whitebumblebee/skills/commit/109e8a38e7e91128bc2a5cd551ae03b328e59028) Thanks [@whitebumblebee](https://github.com/whitebumblebee)! - relay: load less context every session.
+
+  - `SKILL.md` is less than half its previous size (about 800 words, down from 1,750). The procedures agents need only occasionally — taking over a task, new work found mid-task, being blocked, compaction — moved to `docs/`, linked from a reference table so agents open them only when needed.
+  - `relay init` no longer copies the whole skill into `.claude/skills/relay/`. It writes a short file that registers the skill and points at the installed copy, so it never goes stale after an update.
+
 ## 0.2.0
 
 ### Minor Changes
