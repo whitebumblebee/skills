@@ -209,6 +209,7 @@ See [docs/harnesses.md](docs/harnesses.md) for per-tool setup.
 | [Getting started](docs/getting-started.md) | Install, first project, the daily loop |
 | [How it works](docs/relay_flow.md) | Every scenario end to end: setup, picking up work, every kind of handoff |
 | [Setup](docs/setup.md) | The agent's setup interview for new and existing projects |
+| Agent procedures | [Takeover](docs/takeover.md), [new work](docs/new-work.md), [blocked](docs/blocked.md), [compaction](docs/compaction.md) — loaded by agents only when needed |
 | [Harnesses](docs/harnesses.md) | Setup for every supported tool |
 | [CLI reference](docs/cli.md) | Every command, every flag |
 | [File formats](docs/file-formats.md) | Front-matter schema, task states, naming |

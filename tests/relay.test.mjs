@@ -413,6 +413,25 @@ test("pointers tell agents where the CLI lives, since it is not on PATH", () => 
   }
 });
 
+test("the Claude Code skill file registers relay but points at the installed skill", () => {
+  const root = sandbox();
+  runInit(root, { harnesses: ["claude-code"] });
+  const text = fs.readFileSync(path.join(root, ".claude", "skills", "relay", "SKILL.md"), "utf8");
+  const { data, body } = parseFrontmatter(text);
+  assert.equal(data.name, "relay");
+  assert.match(String(data.description), /Continue work another AI agent started/);
+  assert.match(body, /Read `.+\/SKILL\.md` and\s+follow it/);
+  assert.ok(!body.includes("## Claim before you edit"), "not a full copy that can go stale");
+});
+
+test("SKILL.md links only to docs that ship with the skill", () => {
+  const skillDir = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "skills", "engineering", "relay");
+  const skill = fs.readFileSync(path.join(skillDir, "SKILL.md"), "utf8");
+  const links = [...skill.matchAll(/\]\((docs\/[^)#]+)/g)].map((m) => m[1]);
+  assert.ok(links.length >= 6);
+  for (const link of links) assert.ok(fs.existsSync(path.join(skillDir, link)), link);
+});
+
 test("relay-owned files are still left alone without --force", () => {
   const root = sandbox();
   fs.mkdirSync(path.join(root, ".cursor", "rules"), { recursive: true });

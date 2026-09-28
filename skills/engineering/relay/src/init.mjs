@@ -130,9 +130,7 @@ export function runInit(root, { harnesses = [], force = false, name, mode } = {}
       if (written.has(rel)) continue;
       written.add(rel);
       const file = path.join(root, rel);
-      // A skill file needs its own YAML front-matter to register with the
-      // harness, so these get the real skill rather than a pointer to it.
-      if (rel.endsWith("skills/relay/SKILL.md")) put(file, skillBody());
+      if (rel.endsWith("skills/relay/SKILL.md")) put(file, skillPointer(root));
       else if (isShared(rel)) merge(file, text);
       else put(file, harnessFile(rel, projectName));
     }
@@ -156,10 +154,26 @@ export function setupGuidePath() {
   return path.join(here, "..", "docs", "setup.md");
 }
 
-/** The packaged skill, shipped verbatim so harnesses see its front-matter. */
-function skillBody() {
+/**
+ * A harness skill file that registers relay under the real skill's
+ * front-matter but points at the installed skill for everything else. A full
+ * copy would go stale on every relay update, and its links to docs/ would not
+ * resolve from another directory.
+ */
+function skillPointer(root) {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  return fs.readFileSync(path.join(here, "..", "SKILL.md"), "utf8");
+  const skillDir = path.join(here, "..");
+  const source = fs.readFileSync(path.join(skillDir, "SKILL.md"), "utf8");
+  const front = source.slice(0, source.indexOf("\n---", 3) + 4);
+  const rel = path.relative(root, skillDir);
+  const where = rel && !rel.startsWith("..") ? rel : skillDir;
+  return `${front}
+
+# relay
+
+The relay skill is installed at \`${where}\`. Read \`${where}/SKILL.md\` and
+follow it. Its \`docs/\` folder, next to it, holds the procedures it links to.
+`;
 }
 
 function projectTemplate(name) {
